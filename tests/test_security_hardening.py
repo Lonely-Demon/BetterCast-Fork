@@ -51,7 +51,8 @@ class SecurityHardeningRegressionTests(unittest.TestCase):
         self.assertIn("Assert-Sha256", windows)
         self.assertIn("LINUXDEPLOY_VERSION", linux)
         self.assertIn("sha256sum --check", linux)
-        self.assertIn("BETTERCAST_ADB_LINUX_SHA256", linux)
+        self.assertIn("ADB_LINUX_SHA256:", linux)
+        self.assertIn("d230f13842f60f782a8645f9c813f8f845bf36089ea7289f28c48f17979313f1", linux)
 
 
 if __name__ == "__main__":
