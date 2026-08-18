@@ -181,42 +181,49 @@ class TcpClient {
                     // 0x01 = video, 0x02 = audio
                     if (buffer.isNotEmpty()) {
                         val typeByte = buffer[0].toInt() and 0xFF
-                        if (typeByte == 0x01 && buffer.size > 1) {
-                            // Video packet — strip type byte
-                            val videoData = buffer.copyOfRange(1, buffer.size)
-                            frameCount++
-                            if (frameCount <= 5 || frameCount % 300 == 0L) {
-                                val keyframe = isKeyframe(videoData)
-                                Log.i(TAG, "Deliver frame #$frameCount: ${videoData.size} bytes${if (keyframe) " [KEYFRAME]" else ""}")
+                        if (typeByte == 0x01 || typeByte == 0x02 || typeByte == 0x03) {
+                            if (buffer.size <= 1) {
+                                Log.w(TAG, "Truncated typed packet 0x${typeByte.toString(16)}; closing peer")
+                                handleClientDisconnect("Truncated typed packet")
+                                return@launch
                             }
-                            onFrameReceived?.invoke(videoData)
-                            continue
-                        } else if (typeByte == 0x02 && buffer.size > 1) {
-                            // Audio packet — strip type byte
-                            val audioData = buffer.copyOfRange(1, buffer.size)
-                            audioCount++
-                            if (audioCount <= 3 || audioCount % 200 == 0L) {
-                                Log.i(TAG, "Audio packet #$audioCount: ${audioData.size} bytes")
-                            }
-                            onAudioReceived?.invoke(audioData)
-                            continue
-                        } else if (typeByte == 0x03 && buffer.size > 1) {
-                            // Control packet — bounded JSON payload, strip type byte.
-                            val now = SystemClock.elapsedRealtime()
-                            if (now - controlWindowStartMs >= 1_000L) {
-                                controlWindowStartMs = now
-                                controlCountInWindow = 0
-                            }
-                            controlCountInWindow++
-                            val controlData = buffer.copyOfRange(1, buffer.size)
-                            if (controlCountInWindow > 240) {
-                                Log.w(TAG, "Dropping excessive control packet rate")
-                            } else if (controlData.size <= 16 * 1024) {
-                                onControlReceived?.invoke(controlData)
+                            if (typeByte == 0x01) {
+                                // Video packet — strip type byte
+                                val videoData = buffer.copyOfRange(1, buffer.size)
+                                frameCount++
+                                if (frameCount <= 5 || frameCount % 300 == 0L) {
+                                    val keyframe = isKeyframe(videoData)
+                                    Log.i(TAG, "Deliver frame #$frameCount: ${videoData.size} bytes${if (keyframe) " [KEYFRAME]" else ""}")
+                                }
+                                onFrameReceived?.invoke(videoData)
+                                continue
+                            } else if (typeByte == 0x02) {
+                                // Audio packet — strip type byte
+                                val audioData = buffer.copyOfRange(1, buffer.size)
+                                audioCount++
+                                if (audioCount <= 3 || audioCount % 200 == 0L) {
+                                    Log.i(TAG, "Audio packet #$audioCount: ${audioData.size} bytes")
+                                }
+                                onAudioReceived?.invoke(audioData)
+                                continue
                             } else {
-                                Log.w(TAG, "Dropping oversized control packet: ${controlData.size} bytes")
+                                // Control packet — bounded JSON payload, strip type byte.
+                                val now = SystemClock.elapsedRealtime()
+                                if (now - controlWindowStartMs >= 1_000L) {
+                                    controlWindowStartMs = now
+                                    controlCountInWindow = 0
+                                }
+                                controlCountInWindow++
+                                val controlData = buffer.copyOfRange(1, buffer.size)
+                                if (controlCountInWindow > 240) {
+                                    Log.w(TAG, "Dropping excessive control packet rate")
+                                } else if (controlData.size <= 16 * 1024) {
+                                    onControlReceived?.invoke(controlData)
+                                } else {
+                                    Log.w(TAG, "Dropping oversized control packet: ${controlData.size} bytes")
+                                }
+                                continue
                             }
-                            continue
                         }
                     }
 

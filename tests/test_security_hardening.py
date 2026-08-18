@@ -70,6 +70,8 @@ class SecurityHardeningRegressionTests(unittest.TestCase):
         self.assertIn("controlWindowStartMs", tcp)
         self.assertIn("controlCountInWindow > 240", tcp)
         self.assertIn("Dropping excessive control packet rate", tcp)
+        self.assertIn("Truncated typed packet", tcp)
+        self.assertIn("handleClientDisconnect(\"Truncated typed packet\")", tcp)
 
     def test_display_suspend_resume_is_explicit_and_safe(self):
         desktop = self.read("Sources/BetterCastReceiverDesktop/MainWindow.cpp")
