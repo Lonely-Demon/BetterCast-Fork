@@ -119,6 +119,14 @@ private fun WaitingView(statusMessage: String, deviceIp: String?, port: Int) {
             textAlign = TextAlign.Center
         )
 
+        Text(
+            text = "This phone is in Receive mode. To cast this phone, tap Send at the top.",
+            fontSize = 12.sp,
+            color = Color(0xFF64B5F6),
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
+        )
+
         if (deviceIp != null && port > 0) {
             Spacer(modifier = Modifier.height(24.dp))
 

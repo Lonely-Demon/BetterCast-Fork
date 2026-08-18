@@ -37,6 +37,17 @@ class SecurityHardeningRegressionTests(unittest.TestCase):
         self.assertIn("isValid(event", kotlin)
         self.assertIn("MAX_BYTES_IN_FLIGHT", self.read("Sources/BetterCastReceiverAndroid/app/src/main/java/com/bettercast/receiver/network/UdpClient.kt"))
 
+    def test_receiver_sender_roles_are_explicit(self):
+        desktop = self.read("Sources/BetterCastReceiverDesktop/MainWindow.cpp")
+        android_receiver = self.read("Sources/BetterCastReceiverAndroid/app/src/main/java/com/bettercast/receiver/ui/ReceiverScreen.kt")
+        android_sender = self.read("Sources/BetterCastReceiverAndroid/app/src/main/java/com/bettercast/receiver/sender/SenderScreen.kt")
+        self.assertIn("This PC is a receiver and is waiting for a sender", desktop)
+        self.assertIn("Enter the sender's IP address (not this PC's address)", desktop)
+        self.assertIn("tap Send at the top", desktop)
+        self.assertIn("This phone is in Receive mode. To cast this phone, tap Send at the top.", android_receiver)
+        self.assertIn("Windows, Linux, or Mac BetterCast Receiver", android_sender)
+        self.assertNotIn("On your Mac, run:", android_sender)
+
     def test_installer_has_no_wildcard_executable_fallback(self):
         installer = self.read("Sources/BetterCastReceiverDesktop/installer.nsi")
         self.assertNotIn("FindFirst", installer)

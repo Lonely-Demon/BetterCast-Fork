@@ -117,7 +117,7 @@ private fun IdleView(statusMessage: String, onStartCasting: () -> Unit) {
         Spacer(modifier = Modifier.height(32.dp))
 
         Text(
-            text = "Your Android screen will be streamed\nto a Mac running BetterCast Receiver",
+            text = "Your Android screen will be streamed\nto a Windows, Linux, or Mac BetterCast Receiver",
             fontSize = 12.sp,
             color = Color(0xFF777777),
             textAlign = TextAlign.Center,
@@ -171,7 +171,7 @@ private fun WaitingView(statusMessage: String, port: Int, onStop: () -> Unit) {
             Spacer(modifier = Modifier.height(24.dp))
 
             Text(
-                text = "On your Mac, run:",
+                text = "On the receiving computer, run:",
                 fontSize = 12.sp,
                 color = Color.Gray
             )

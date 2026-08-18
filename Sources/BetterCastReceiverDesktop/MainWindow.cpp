@@ -814,10 +814,10 @@ void MainWindow::setupReceivePage() {
     listenLayout->addWidget(m_recvIpLabel);
 
     auto* instrLabel = new QLabel(
-        "This device is ready to receive. On the sender device:\n"
-        "  1. Open BetterCast and go to Send Screen\n"
-        "  2. This device should appear automatically\n"
-        "  3. Or enter this device's IP address manually");
+        "This PC is a receiver and is waiting for a sender. To mirror Android:\n"
+        "  1. On Android, tap Send at the top\n"
+        "  2. Tap Start Casting and allow screen capture\n"
+        "  3. Enter the Android IP below, or use Android (ADB) over USB");
     instrLabel->setStyleSheet("color: #888; font-size: 12px;");
     instrLabel->setWordWrap(true);
     listenLayout->addWidget(instrLabel);
@@ -829,7 +829,7 @@ void MainWindow::setupReceivePage() {
     auto* manualLayout = new QVBoxLayout(manualCard);
     manualLayout->setSpacing(10);
 
-    auto* manualDesc = new QLabel("Connect to a sender that isn't auto-discovered:");
+    auto* manualDesc = new QLabel("Enter the sender's IP address (not this PC's address):");
     manualDesc->setStyleSheet("font-size: 12px; color: #888;");
     manualLayout->addWidget(manualDesc);
 
@@ -875,11 +875,11 @@ void MainWindow::setupReceivePage() {
     adbLayout->addWidget(m_adbBtn);
 
     m_adbHelpLabel = new QLabel(
-        "To mirror your Android screen:\n"
-        "1. Enable Developer Options (tap Build Number 7x in Settings > About)\n"
-        "2. Enable USB Debugging in Developer Options\n"
-        "3. Connect Android to this computer via USB\n"
-        "4. Open BetterCast on Android and tap \"Start Casting\"\n"
+        "To mirror your Android screen over USB:\n"
+        "1. On Android, tap Send at the top\n"
+        "2. Tap Start Casting and allow screen capture\n"
+        "3. Enable Developer Options and USB Debugging\n"
+        "4. Connect Android to this computer and tap Allow\n"
         "5. Click the button above to connect");
     m_adbHelpLabel->setStyleSheet("color: #666; font-size: 11px;");
     m_adbHelpLabel->setWordWrap(true);
