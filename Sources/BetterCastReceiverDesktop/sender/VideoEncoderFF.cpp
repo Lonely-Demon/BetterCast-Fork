@@ -124,7 +124,8 @@ bool VideoEncoderFF::init(int width, int height, int fps, int bitrateMbps) {
         "h264_amf",       // AMD
         "h264_qsv",       // Intel QuickSync
         "h264_vaapi",     // Linux VA-API
-        "libx264",        // Software fallback
+        "libopenh264",    // Cross-platform software fallback
+        "libx264",        // GPL software fallback when available
         nullptr
     };
 
@@ -135,7 +136,7 @@ bool VideoEncoderFF::init(int width, int height, int fps, int bitrateMbps) {
     }
 
     if (!m_ctx) {
-        emit error("No H.264 encoder available. Install FFmpeg with libx264.");
+        emit error("No H.264 encoder available. Install FFmpeg with OpenH264 or another supported encoder.");
         return false;
     }
 

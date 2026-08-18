@@ -73,6 +73,9 @@ class SecurityHardeningRegressionTests(unittest.TestCase):
         self.assertIn("profile=private", installer)
 
     def test_ci_downloads_are_verified_or_pinned(self):
+        all_in_one = self.read(".github/workflows/build-windows-all-in-one.yml")
+        self.assertIn("ffmpeg[openh264,qsv]", all_in_one)
+        self.assertNotIn("ffmpeg[x264]", all_in_one)
         windows = self.read(".github/workflows/build-windows-receiver.yml")
         linux = self.read(".github/workflows/build-linux-receiver.yml")
         self.assertIn("Assert-Sha256", windows)

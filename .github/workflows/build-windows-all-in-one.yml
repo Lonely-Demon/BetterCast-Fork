@@ -37,7 +37,7 @@ jobs:
       - name: Install FFmpeg with H.264 encoder support
         shell: pwsh
         run: |
-          vcpkg install "ffmpeg[x264]:x64-windows" --recurse
+          vcpkg install "ffmpeg[openh264,qsv]:x64-windows" --recurse
         env:
           VCPKG_ROOT: C:/vcpkg
 
