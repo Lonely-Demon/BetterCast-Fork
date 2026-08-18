@@ -11,7 +11,9 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   QT_VERSION: '6.7.0'
   LINUXDEPLOY_VERSION: '1-alpha-20251107-1'
-  ADB_LINUX_SHA256: ${{ vars.BETTERCAST_ADB_LINUX_SHA256 }}
+  # Verified SHA-256 for platform-tools-latest-linux.zip at 2026-08-18.
+  # Update this digest whenever Google changes the latest archive.
+  ADB_LINUX_SHA256: 'd230f13842f60f782a8645f9c813f8f845bf36089ea7289f28c48f17979313f1'
   LINUXDEPLOY_SHA256: 'c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d'
 
 jobs:
@@ -120,7 +122,7 @@ jobs:
       - name: Download and verify ADB platform-tools
         run: |
           set -euo pipefail
-          : "${ADB_LINUX_SHA256:?BETTERCAST_ADB_LINUX_SHA256 repository variable is required}"
+          : "${ADB_LINUX_SHA256:?ADB_LINUX_SHA256 must be configured}"
           wget -q "https://dl.google.com/android/repository/platform-tools-latest-linux.zip" -O platform-tools.zip
           echo "${ADB_LINUX_SHA256}  platform-tools.zip" | sha256sum --check --status
           unzip -q platform-tools.zip
