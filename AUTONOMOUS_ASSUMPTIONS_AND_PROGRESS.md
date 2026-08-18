@@ -29,11 +29,13 @@ The final target is a Windows–Android ecosystem companion rather than a single
 | Windows portable receiver | Previously built successfully and contains `opengl32sw.dll`. |
 | Linux receiver | Previously built successfully. |
 | Android AccessibilityService | Added and built successfully in CI after fixing the accessibility XML flag. It supports bounded tap, swipe, move overlay, and allow-listed global actions when explicitly armed. |
-| Android control packet channel | Added as TCP packet type `0x03`, bounded to 16 KiB. |
+| Android control packet channel | Added as TCP packet type `0x03`, bounded to 16 KiB and limited to 240 packets per connection-second; the bound is covered by regression tests. |
 | Windows control-only sender API | Added to `SenderController` and `NetworkSender`. |
 | Windows Phone Control pointer milestone | Added: explicit control-only connection and center-anchored mouse movement/tap loop with Escape safety stop. This is not yet a true screen-edge handoff and does not yet provide full keyboard mapping. |
-| Android debug APK | Successful CI artifact from run `32177241964`; SHA-256 `70e20f182f8e3ce40c6006509ffa8d759bad970ed876a65187226530f0ab4d00`. |
-| Windows all-in-one sender/receiver | Still in CI iteration. Earlier attempt failed on x264 source hash mismatch; the workflow now uses OpenH264/QSV and a more robust Qt 6.7.3 installer path. |
+| Android session cleanup | TCP disconnect, LISTENING/ERROR/IDLE transitions, explicit disconnect, and view-model teardown now disarm the AccessibilityService session and clear suspended-display state where applicable. |
+| Android debug APK | Successful CI artifacts from runs `32181809963` and `32185136237`; the latest hardening commit `ac631d5285e1c02342097c3eeee902a49c8529fd` is being validated by run `32185260188`. |
+| Windows all-in-one sender/receiver | Successful CI artifact from run `32181810245` at commit `0ec94468590ee7b1cfc5d5dece29687f16bbb95d`; a current-commit rebuild is running as `32185288715`. Earlier attempts failed on x264 source hash mismatch; the workflow now uses OpenH264 and Qt 6.7.3. |
+| Feature research notes | Official WASAPI loopback and Android MediaProjection constraints are recorded in `research_feature_constraints.md`; mirroring remains optional and requires per-session Android consent. |
 
 ## Assumptions made while user was unavailable
 
@@ -49,7 +51,7 @@ The final target is a Windows–Android ecosystem companion rather than a single
 
 - Complete the Windows all-in-one build and repair any Qt, OpenH264, CMake, linker, or packaging failures.
 - Run automated Android and repository regression tests after each fix.
-- Audit the new control protocol for malformed JSON, rate abuse, session authorization, and disconnect behavior.
+- Audit the new control protocol for malformed JSON, rate abuse, session authorization, and disconnect behavior; rate abuse and disconnect cleanup have now been hardened, while authentication/encryption remain release blockers.
 - Add safe session suspend/resume state handling and the Windows hotkey foundation where it can be implemented without human setup.
 - Produce a broader feature roadmap for files, clipboard, audio, second display, keyboard/text, and optional phone mirroring, clearly labeling platform limitations.
 - Keep a final handoff with commit IDs, artifact links, hashes, test results, unresolved limitations, and a clear separation between completed capabilities, milestones, and future roadmap items.
