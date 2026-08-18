@@ -98,6 +98,8 @@ class ReceiverViewModel(application: Application) : AndroidViewModel(application
                     }
                     ConnectionState.IDLE -> {
                         wasConnected = false
+                        _displaySuspended.value = false
+                        BetterCastAccessibilityService.setSessionArmed(false)
                         _state.value = ReceiverState.WAITING
                         _statusMessage.value = "Starting..."
                     }
@@ -276,6 +278,7 @@ class ReceiverViewModel(application: Application) : AndroidViewModel(application
     }
 
     override fun onCleared() {
+        BetterCastAccessibilityService.setSessionArmed(false)
         super.onCleared()
         serviceAdvertiser.stopAdvertising()
         tcpServer.destroy()

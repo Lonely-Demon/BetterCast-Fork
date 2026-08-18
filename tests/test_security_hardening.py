@@ -81,6 +81,9 @@ class SecurityHardeningRegressionTests(unittest.TestCase):
         self.assertIn('"display_suspend"', android)
         self.assertIn('"display_resume"', android)
         self.assertIn("requestKeyframe", android)
+        self.assertIn("ConnectionState.IDLE", android)
+        self.assertIn("BetterCastAccessibilityService.setSessionArmed(false)", android)
+        self.assertIn("override fun onCleared()", android)
 
     def test_installer_has_no_wildcard_executable_fallback(self):
         installer = self.read("Sources/BetterCastReceiverDesktop/installer.nsi")
