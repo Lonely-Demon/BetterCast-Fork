@@ -77,7 +77,20 @@ bool NetworkSender::isConnected() const {
 }
 
 void NetworkSender::sendPacket(uint8_t type, const QByteArray& payload) {
-    if (!isConnected()) return;
+    if (!isConnected() || payload.isEmpty()) return;
+    if (payload.size() > MaxPayloadBytes) {
+        qWarning() << "Sender: dropping oversized payload" << payload.size();
+        return;
+    }
+    if (m_socket->bytesToWrite() > MaxQueuedBytes) {
+        const auto now = QDateTime::currentDateTime();
+        if (!m_lastBackpressureLog.isValid() || m_lastBackpressureLog.msecsTo(now) > 2000) {
+            qWarning() << "Sender: socket queue exceeds" << MaxQueuedBytes
+                       << "bytes; dropping media packet to apply backpressure";
+            m_lastBackpressureLog = now;
+        }
+        return;
+    }
 
     // BetterCast TCP framing: [4B BE length][1B type][payload]
     // length = 1 (type byte) + payload size

@@ -93,9 +93,10 @@ Section "BetterCast (required)" SecCore
 
     ; Add firewall rules
     DetailPrint "Adding firewall rules..."
-    nsExec::ExecToLog 'netsh advfirewall firewall add rule name="BetterCast mDNS" dir=in action=allow protocol=UDP localport=5353'
-    nsExec::ExecToLog 'netsh advfirewall firewall add rule name="BetterCast Streaming" dir=in action=allow protocol=TCP localport=51820'
-    nsExec::ExecToLog 'netsh advfirewall firewall add rule name="BetterCast App" dir=in action=allow program="$INSTDIR\BetterCastReceiver.exe"'
+    ; Keep exposure limited to the Windows Private profile and local subnet.
+    nsExec::ExecToLog 'netsh advfirewall firewall add rule name="BetterCast mDNS" dir=in action=allow protocol=UDP localport=5353 profile=private remoteip=localsubnet'
+    nsExec::ExecToLog 'netsh advfirewall firewall add rule name="BetterCast Streaming" dir=in action=allow protocol=TCP localport=51820 profile=private remoteip=localsubnet'
+    nsExec::ExecToLog 'netsh advfirewall firewall add rule name="BetterCast App" dir=in action=allow program="$INSTDIR\BetterCastReceiver.exe" profile=private remoteip=localsubnet'
 SectionEnd
 
 Section "Virtual Display Driver (VDD)" SecVDD
@@ -107,8 +108,8 @@ Section "Virtual Display Driver (VDD)" SecVDD
     ; Copy VDD files (/nonfatal = don't fail if no files bundled)
     File /nonfatal /r "vdd\*.*"
 
-    ; Check if any VDD driver files were actually copied
-    IfFileExists "$INSTDIR\VirtualDisplayDriver\MttVDD.inf" 0 try_generic_inf
+    ; Only install the reviewed, expected driver package. Never select an arbitrary INF.
+    IfFileExists "$INSTDIR\VirtualDisplayDriver\MttVDD.inf" 0 vdd_not_found
 
     ; Install MttVDD driver using devcon (creates device node for IDD drivers)
     IfFileExists "$INSTDIR\VirtualDisplayDriver\devcon.exe" 0 try_pnputil
@@ -127,41 +128,12 @@ Section "Virtual Display Driver (VDD)" SecVDD
     StrCmp $0 "0" vdd_done
     Goto vdd_manual
 
-    try_generic_inf:
-    ; Check for any other .inf files
-    IfFileExists "$INSTDIR\VirtualDisplayDriver\*.inf" 0 try_exe
-    FindFirst $1 $2 "$INSTDIR\VirtualDisplayDriver\*.inf"
-    StrCmp $2 "" try_exe
-    DetailPrint "Found driver: $2"
-    IfFileExists "$INSTDIR\VirtualDisplayDriver\devcon.exe" 0 generic_pnputil
-    nsExec::ExecToLog '"$INSTDIR\VirtualDisplayDriver\devcon.exe" install "$INSTDIR\VirtualDisplayDriver\$2" Root\MttVDD'
-    FindClose $1
-    Pop $0
-    StrCmp $0 "0" vdd_done
-    generic_pnputil:
-    nsExec::ExecToLog 'pnputil /add-driver "$INSTDIR\VirtualDisplayDriver\$2" /install'
-    Pop $0
-    StrCmp $0 "0" vdd_done
-    Goto vdd_manual
-
-    try_exe:
-    ; Try VDD Control exe to install driver
-    IfFileExists "$INSTDIR\VirtualDisplayDriver\*.exe" 0 vdd_not_found
-    DetailPrint "Running VDD installer..."
-    FindFirst $1 $2 "$INSTDIR\VirtualDisplayDriver\*.exe"
-    StrCmp $2 "" vdd_manual
-    DetailPrint "Running: $2"
-    nsExec::ExecToLog '"$INSTDIR\VirtualDisplayDriver\$2" /S'
-    FindClose $1
-    Goto vdd_done
-
     vdd_manual:
-    DetailPrint "VDD driver files copied. You may need to install manually from $INSTDIR\VirtualDisplayDriver"
+    DetailPrint "VDD driver files copied, but automatic installation failed. Review the exact package and install manually."
     Goto vdd_done
 
     vdd_not_found:
-    DetailPrint "VDD files not bundled in this build"
-    DetailPrint "Install VDD manually from github.com/itsmikethetech/Virtual-Display-Driver"
+    DetailPrint "Expected MttVDD.inf is not bundled; refusing generic driver/helper fallback."
     Goto vdd_skip_registry
 
     vdd_done:
@@ -189,11 +161,15 @@ Section "Uninstall"
     nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="BetterCast Streaming"'
     nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="BetterCast App"'
 
-    ; Remove VDD driver (best effort)
-    IfFileExists "$INSTDIR\VirtualDisplayDriver\VirtualDisplayDriver.inf" 0 skip_vdd_remove
-    DetailPrint "Removing Virtual Display Driver..."
-    nsExec::ExecToLog 'pnputil /delete-driver "$INSTDIR\VirtualDisplayDriver\VirtualDisplayDriver.inf" /uninstall'
-    skip_vdd_remove:
+    ; Remove only the expected VDD driver packages (best effort).
+    IfFileExists "$INSTDIR\VirtualDisplayDriver\MttVDD.inf" 0 skip_mttvdd_remove
+    DetailPrint "Removing MttVDD driver..."
+    nsExec::ExecToLog 'pnputil /delete-driver "$INSTDIR\VirtualDisplayDriver\MttVDD.inf" /uninstall'
+    skip_mttvdd_remove:
+    IfFileExists "$INSTDIR\VirtualDisplayDriver\VirtualAudioDriver.inf" 0 skip_audio_remove
+    DetailPrint "Removing Virtual Audio driver..."
+    nsExec::ExecToLog 'pnputil /delete-driver "$INSTDIR\VirtualDisplayDriver\VirtualAudioDriver.inf" /uninstall'
+    skip_audio_remove:
 
     ; Remove files
     RMDir /r "$INSTDIR"

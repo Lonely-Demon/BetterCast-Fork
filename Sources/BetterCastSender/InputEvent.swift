@@ -37,4 +37,16 @@ struct InputEvent: Codable {
             self.eventId = InputEvent.nextId
         }
     }
+
+    var isValidForTransport: Bool {
+        guard eventId > 0,
+              x.isFinite, y.isFinite,
+              deltaX.isFinite, deltaY.isFinite,
+              abs(deltaX) <= 10_000,
+              abs(deltaY) <= 10_000 else { return false }
+        if type == .command && ![UInt16(777), UInt16(888), UInt16(999)].contains(keyCode) { return false }
+        if type != .command && !(0.0...1.0).contains(x) { return false }
+        if type != .command && !(0.0...1.0).contains(y) { return false }
+        return true
+    }
 }

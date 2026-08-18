@@ -98,6 +98,7 @@ class TcpClient {
                     val socket = server.accept()
                     socket.tcpNoDelay = true
                     socket.keepAlive = true
+                    socket.soTimeout = 15_000
                     socket.receiveBufferSize = 524288  // 512KB — handles ADB tunnel jitter bursts
                     socket.sendBufferSize = 65536      // 64KB for input events
 
@@ -162,8 +163,9 @@ class TcpClient {
                 while (isActive) {
                     val length = input.readInt()
                     if (length <= 0 || length > 10_000_000) {
-                        Log.w(TAG, "Invalid frame length: $length")
-                        continue
+                        Log.w(TAG, "Invalid frame length: $length; closing peer")
+                        handleClientDisconnect("Invalid frame length")
+                        return@launch
                     }
 
                     val buffer = ByteArray(length)
@@ -251,10 +253,8 @@ class TcpClient {
         packet.put(jsonBytes)
         val packetBytes = packet.array()
 
-        scope.launch {
-            repeat(repeatCount) {
-                sendQueue.trySend(packetBytes)
-            }
+        repeat(repeatCount) {
+            sendQueue.trySend(packetBytes)
         }
     }
 

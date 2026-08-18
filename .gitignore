@@ -49,3 +49,7 @@ aqtinstall.log
 .env.*
 *.local
 secrets.json
+
+# Python test caches
+__pycache__/
+*.py[cod]

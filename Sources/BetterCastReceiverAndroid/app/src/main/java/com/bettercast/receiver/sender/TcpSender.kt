@@ -38,7 +38,8 @@ class TcpSender {
     private var outputStream: DataOutputStream? = null
     private var inputStream: DataInputStream? = null
 
-    private val sendQueue = Channel<ByteArray>(Channel.BUFFERED)
+    // A bounded queue prevents a slow receiver from retaining hundreds of megabytes of video.
+    private val sendQueue = Channel<ByteArray>(capacity = 8)
 
     private var acceptJob: Job? = null
     private var readJob: Job? = null
@@ -89,6 +90,7 @@ class TcpSender {
                     val socket = server.accept()
                     socket.tcpNoDelay = true
                     socket.keepAlive = true
+                    socket.soTimeout = 15_000
                     socket.sendBufferSize = 524288    // 512KB for video frames
                     socket.receiveBufferSize = 65536  // 64KB for input events
 
@@ -120,12 +122,18 @@ class TcpSender {
      * This wraps it with 4-byte big-endian length prefix.
      */
     fun sendFrame(frameData: ByteArray) {
-        if (_connectionState.value != ConnectionState.CONNECTED) return
+        if (_connectionState.value != ConnectionState.CONNECTED || frameData.isEmpty()) return
+        if (frameData.size > 10_000_000) {
+            Log.w(TAG, "Dropping oversized frame: ${frameData.size} bytes")
+            return
+        }
 
         val packet = ByteBuffer.allocate(4 + frameData.size)
         packet.putInt(frameData.size) // big-endian by default
         packet.put(frameData)
-        sendQueue.trySend(packet.array())
+        if (!sendQueue.trySend(packet.array()).isSuccess) {
+            Log.w(TAG, "Dropping video frame because the send queue is full")
+        }
     }
 
     /**
@@ -142,8 +150,9 @@ class TcpSender {
                 while (isActive) {
                     val length = input.readInt()
                     if (length <= 0 || length > 100_000) {
-                        Log.w(TAG, "Invalid input event length: $length")
-                        continue
+                        Log.w(TAG, "Invalid input event length: $length; closing peer")
+                        handleClientDisconnect("Invalid input event length")
+                        return@launch
                     }
 
                     val buffer = ByteArray(length)
@@ -152,6 +161,10 @@ class TcpSender {
                     try {
                         val json = String(buffer, Charsets.UTF_8)
                         val event = Json.decodeFromString<InputEvent>(json)
+                        if (!InputEvent.isValid(event)) {
+                            Log.w(TAG, "Rejected invalid input event")
+                            continue
+                        }
 
                         when {
                             event.type == InputEvent.TYPE_COMMAND &&

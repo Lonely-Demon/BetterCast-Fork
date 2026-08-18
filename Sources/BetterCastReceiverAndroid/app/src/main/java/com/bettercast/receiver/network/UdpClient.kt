@@ -18,6 +18,10 @@ class UdpClient(private val port: Int) {
     companion object {
         private const val TAG = "UdpClient"
         private const val MAX_PACKET_SIZE = 65535
+        private const val MAX_UDP_CHUNKS = 2048
+        private const val MAX_FRAMES_IN_FLIGHT = 16
+        private const val MAX_BYTES_IN_FLIGHT = 32 * 1024 * 1024
+        private const val MAX_FRAME_SIZE = 8 * 1024 * 1024
         private const val STALE_FRAME_TIMEOUT_MS = 500L
         private const val CLEANUP_INTERVAL = 100
         private const val HEARTBEAT_INTERVAL_MS = 5_000L
@@ -27,7 +31,8 @@ class UdpClient(private val port: Int) {
     private data class FrameBuffer(
         val totalChunks: Int,
         val chunks: MutableMap<Int, ByteArray>,
-        val timestamp: Long
+        val timestamp: Long,
+        var totalBytes: Int = 0
     )
 
     private var socket: DatagramSocket? = null
@@ -37,6 +42,7 @@ class UdpClient(private val port: Int) {
     private var cleanupCounter = 0
 
     private val frameBuffers = mutableMapOf<Long, FrameBuffer>()
+    private var bytesInFlight = 0
     private var lastDecodedFrameId: Long = 0
 
     // Track sender address for sending heartbeats/input back
@@ -68,12 +74,17 @@ class UdpClient(private val port: Int) {
                 val packet = DatagramPacket(buffer, buffer.size)
 
                 while (isActive) {
+                    packet.length = buffer.size
                     sock.receive(packet)
 
                     // Track sender address for bidirectional communication
                     val newAddr = packet.address
                     val newPort = packet.port
-                    if (senderAddress == null || senderAddress != newAddr || senderPort != newPort) {
+                    if (senderAddress != null && (senderAddress != newAddr || senderPort != newPort)) {
+                        // Do not allow an unauthenticated datagram to retarget the session.
+                        continue
+                    }
+                    if (senderAddress == null) {
                         senderAddress = newAddr
                         senderPort = newPort
                         if (!isSenderConnected) {
@@ -97,62 +108,75 @@ class UdpClient(private val port: Int) {
     }
 
     private fun handlePacket(data: ByteArray) {
-        if (data.size <= 8) return
+        if (data.size <= 8 || data.size > MAX_PACKET_SIZE) return
 
         val header = ByteBuffer.wrap(data, 0, 8).order(ByteOrder.BIG_ENDIAN)
         val frameId = header.int.toLong() and 0xFFFFFFFFL
         val chunkId = header.short.toInt() and 0xFFFF
         val totalChunks = header.short.toInt() and 0xFFFF
+        if (totalChunks <= 0 || totalChunks > MAX_UDP_CHUNKS || chunkId >= totalChunks) return
 
         val payload = data.copyOfRange(8, data.size)
+        var completeFrame: ByteArray? = null
+        var gapDetected = false
 
         synchronized(frameBuffers) {
             if (lastDecodedFrameId == 0L) {
                 lastDecodedFrameId = frameId - 1
             }
 
-            val fb = frameBuffers.getOrPut(frameId) {
-                FrameBuffer(
-                    totalChunks = totalChunks,
-                    chunks = mutableMapOf(),
-                    timestamp = System.currentTimeMillis()
-                )
+            val current = frameBuffers[frameId]
+            if (current == null) {
+                if (frameBuffers.size >= MAX_FRAMES_IN_FLIGHT || bytesInFlight + payload.size > MAX_BYTES_IN_FLIGHT) {
+                    return@synchronized
+                }
+                frameBuffers[frameId] = FrameBuffer(totalChunks, mutableMapOf(), System.currentTimeMillis())
             }
 
-            fb.chunks[chunkId] = payload
+            val frame = frameBuffers[frameId] ?: return@synchronized
+            if (frame.totalChunks != totalChunks) {
+                bytesInFlight -= frame.totalBytes
+                frameBuffers.remove(frameId)
+                return@synchronized
+            }
 
-            if (fb.chunks.size == fb.totalChunks) {
-                // Gap detection
-                val diff = frameId - lastDecodedFrameId
-                if (diff > 1 && diff < 1000) {
-                    onGapDetected?.invoke()
+            if (!frame.chunks.containsKey(chunkId)) {
+                if (bytesInFlight + payload.size > MAX_BYTES_IN_FLIGHT) return@synchronized
+                frame.chunks[chunkId] = payload
+                frame.totalBytes += payload.size
+                bytesInFlight += payload.size
+            }
+
+            val complete = frame.chunks.size == frame.totalChunks &&
+                (0 until frame.totalChunks).all { frame.chunks.containsKey(it) }
+            if (complete) {
+                if (frame.totalBytes > MAX_FRAME_SIZE) {
+                    bytesInFlight -= frame.totalBytes
+                    frameBuffers.remove(frameId)
+                    return@synchronized
                 }
-
-                lastDecodedFrameId = frameId
-
-                // Reassemble
-                val sortedChunks = fb.chunks.toSortedMap()
-                var totalSize = 0
-                for ((_, chunk) in sortedChunks) {
-                    totalSize += chunk.size
-                }
-                val fullFrame = ByteArray(totalSize)
+                val sortedChunks = (0 until frame.totalChunks).mapNotNull { frame.chunks[it] }
+                completeFrame = ByteArray(frame.totalBytes)
                 var offset = 0
-                for ((_, chunk) in sortedChunks) {
-                    System.arraycopy(chunk, 0, fullFrame, offset, chunk.size)
+                for (chunk in sortedChunks) {
+                    System.arraycopy(chunk, 0, completeFrame!!, offset, chunk.size)
                     offset += chunk.size
                 }
-
+                gapDetected = frameId - lastDecodedFrameId > 1 && frameId - lastDecodedFrameId < 1000
+                lastDecodedFrameId = frameId
+                bytesInFlight -= frame.totalBytes
                 frameBuffers.remove(frameId)
-                onFrameReassembled?.invoke(fullFrame)
+            }
 
-                // Periodic cleanup
-                cleanupCounter++
-                if (cleanupCounter % CLEANUP_INTERVAL == 0) {
-                    cleanupStaleFrames()
-                }
+            cleanupCounter++
+            if (cleanupCounter >= CLEANUP_INTERVAL) {
+                cleanupStaleFrames()
+                cleanupCounter = 0
             }
         }
+
+        if (gapDetected) onGapDetected?.invoke()
+        completeFrame?.let { onFrameReassembled?.invoke(it) }
     }
 
     private fun cleanupStaleFrames() {
@@ -161,7 +185,8 @@ class UdpClient(private val port: Int) {
             .filter { now - it.value.timestamp > STALE_FRAME_TIMEOUT_MS }
             .map { it.key }
         for (id in staleIds) {
-            frameBuffers.remove(id)
+            val frame = frameBuffers.remove(id)
+            bytesInFlight -= frame?.totalBytes ?: 0
         }
     }
 
@@ -210,10 +235,8 @@ class UdpClient(private val port: Int) {
         packet.put(jsonBytes)
         val packetBytes = packet.array()
 
-        scope.launch {
-            repeat(repeatCount) {
-                sendQueue.trySend(packetBytes)
-            }
+        repeat(repeatCount) {
+            sendQueue.trySend(packetBytes)
         }
     }
 
@@ -234,6 +257,7 @@ class UdpClient(private val port: Int) {
 
         synchronized(frameBuffers) {
             frameBuffers.clear()
+            bytesInFlight = 0
         }
     }
 

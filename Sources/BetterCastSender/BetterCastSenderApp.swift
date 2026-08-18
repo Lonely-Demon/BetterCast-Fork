@@ -2258,6 +2258,8 @@ class NetworkClient: ObservableObject, VideoEncoderDelegate, AudioEncoderDelegat
     private var recentEventIds: Set<UInt64> = []
     private var recentEventIdQueue: [UInt64] = [] // FIFO to cap set size
     private let maxRecentEvents = 200
+    private static let maxTCPFrameLength = 8 * 1024 * 1024
+    private static let maxUDPControlLength = 100_000
 
     private func isDuplicateEvent(_ eventId: UInt64) -> Bool {
         if recentEventIds.contains(eventId) {
@@ -3382,7 +3384,12 @@ class NetworkClient: ObservableObject, VideoEncoderDelegate, AudioEncoderDelegat
             }
 
             if let content = content, content.count == 4 {
-                let length = content.withUnsafeBytes { $0.load(as: UInt32.self).bigEndian }
+                let length = content.reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+                guard length > 0 && length <= Self.maxTCPFrameLength else {
+                    LogManager.shared.log("Sender: invalid control frame length \(length); closing connection")
+                    connection.cancel()
+                    return
+                }
                 let bodyLength = Int(length)
 
                 connection.receive(minimumIncompleteLength: bodyLength, maximumLength: bodyLength) { body, bodyContext, isComplete, error in
@@ -3391,8 +3398,8 @@ class NetworkClient: ObservableObject, VideoEncoderDelegate, AudioEncoderDelegat
                         // Update heartbeat
                         self?.pipelines[connectionId]?.lastHeartbeat = Date()
 
-                        if let body = body {
-                            if let event = try? JSONDecoder().decode(InputEvent.self, from: body) {
+                        if let body = body, body.count == bodyLength, !body.isEmpty {
+                            if let event = try? JSONDecoder().decode(InputEvent.self, from: body), event.isValidForTransport {
                                 if event.type == .command && event.keyCode == 888 {
                                     // Heartbeat - ignore
                                 } else if event.type == .command && event.keyCode == 999 {
@@ -3404,6 +3411,9 @@ class NetworkClient: ObservableObject, VideoEncoderDelegate, AudioEncoderDelegat
                                     InputHandler.shared.handle(event: event, for: connectionId)
                                 }
                             }
+                        } else {
+                            connection.cancel()
+                            return
                         }
                     }
                     self?.receiveTCP(on: connection, connectionId: connectionId)
@@ -3435,10 +3445,14 @@ class NetworkClient: ObservableObject, VideoEncoderDelegate, AudioEncoderDelegat
             DispatchQueue.main.async {
                 self?.pipelines[connectionId]?.lastHeartbeat = Date()
 
-                if let content = content {
-                    if content.count > 4 {
-                        let body = content.subdata(in: 4..<content.count)
-                        if let event = try? JSONDecoder().decode(InputEvent.self, from: body) {
+                if let content = content, content.count >= 4, content.count <= Self.maxUDPControlLength + 4 {
+                    let length = content.prefix(4).reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+                    guard length > 0, length <= Self.maxUDPControlLength,
+                          Int(length) == content.count - 4 else {
+                        return
+                    }
+                    let body = content.subdata(in: 4..<content.count)
+                    if let event = try? JSONDecoder().decode(InputEvent.self, from: body), event.isValidForTransport {
                             if event.type == .command && event.keyCode == 888 {
                                 // Heartbeat - ignore
                             } else if event.type == .command && event.keyCode == 999 {
@@ -3450,6 +3464,8 @@ class NetworkClient: ObservableObject, VideoEncoderDelegate, AudioEncoderDelegat
                             }
                         }
                     }
+                } else if content != nil {
+                    return
                 }
             }
             self?.receiveUDP(on: connection, connectionId: connectionId)

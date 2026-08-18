@@ -11,6 +11,11 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   QT_VERSION: '6.7.0'
   VDD_VERSION: '25.7.23'  # Virtual Display Driver release tag
+  # Configure these repository variables before enabling release builds.
+  ADB_SHA256: ${{ vars.BETTERCAST_ADB_SHA256 }}
+  VDD_DRIVER_SHA256: ${{ vars.BETTERCAST_VDD_DRIVER_SHA256 }}
+  VDD_CONTROL_SHA256: ${{ vars.BETTERCAST_VDD_CONTROL_SHA256 }}
+  NSIS_SHA256: ${{ vars.BETTERCAST_NSIS_SHA256 }}
 
 jobs:
   build-windows:
@@ -81,21 +86,28 @@ jobs:
           cd Sources/BetterCastReceiverDesktop/build
           cmake --build . --config Release
 
-      - name: Download ADB platform-tools
+      - name: Download and verify ADB platform-tools
         shell: pwsh
         run: |
+          function Assert-Sha256([string]$Path, [string]$Expected) {
+            if ([string]::IsNullOrWhiteSpace($Expected)) { throw "Missing expected SHA-256 for $Path" }
+            $actual = (Get-FileHash -Algorithm SHA256 $Path).Hash.ToLowerInvariant()
+            if ($actual -ne $Expected.ToLowerInvariant()) { throw "SHA-256 mismatch for $Path: expected $Expected, got $actual" }
+          }
           Invoke-WebRequest -Uri "https://dl.google.com/android/repository/platform-tools-latest-windows.zip" `
             -OutFile "platform-tools.zip"
+          Assert-Sha256 "platform-tools.zip" "${env:ADB_SHA256}"
           Expand-Archive -Path "platform-tools.zip" -DestinationPath "."
-          if (Test-Path "platform-tools/adb.exe") {
-            Write-Host "ADB downloaded successfully"
-          } else {
-            Write-Host "WARNING: adb.exe not found in download"
-          }
+          if (!(Test-Path "platform-tools/adb.exe")) { throw "ADB archive did not contain adb.exe" }
 
-      - name: Download Virtual Display Driver (VDD)
+      - name: Download and verify Virtual Display Driver (VDD)
         shell: pwsh
         run: |
+          function Assert-Sha256([string]$Path, [string]$Expected) {
+            if ([string]::IsNullOrWhiteSpace($Expected)) { throw "Missing expected SHA-256 for $Path" }
+            $actual = (Get-FileHash -Algorithm SHA256 $Path).Hash.ToLowerInvariant()
+            if ($actual -ne $Expected.ToLowerInvariant()) { throw "SHA-256 mismatch for $Path: expected $Expected, got $actual" }
+          }
           $vddTag = "${{ env.VDD_VERSION }}"
           $baseUrl = "https://github.com/VirtualDrivers/Virtual-Display-Driver/releases/download/${vddTag}"
 
@@ -105,6 +117,7 @@ jobs:
             $driverUrl = "${baseUrl}/VirtualDisplayDriver-x86.Driver.Only.zip"
             Write-Host "Downloading VDD driver from: $driverUrl"
             Invoke-WebRequest -Uri $driverUrl -OutFile "vdd-driver.zip" -MaximumRedirection 5
+            Assert-Sha256 "vdd-driver.zip" "${env:VDD_DRIVER_SHA256}"
             Expand-Archive -Path "vdd-driver.zip" -DestinationPath "vdd-driver-extract"
             Get-ChildItem "vdd-driver-extract" -Recurse -File | ForEach-Object {
               Copy-Item $_.FullName "vdd/" -Force
@@ -114,6 +127,7 @@ jobs:
             $controlUrl = "${baseUrl}/VDD.Control.${vddTag}.zip"
             Write-Host "Downloading VDD Control from: $controlUrl"
             Invoke-WebRequest -Uri $controlUrl -OutFile "vdd-control.zip" -MaximumRedirection 5
+            Assert-Sha256 "vdd-control.zip" "${env:VDD_CONTROL_SHA256}"
             Expand-Archive -Path "vdd-control.zip" -DestinationPath "vdd-control-extract"
             Get-ChildItem "vdd-control-extract" -Recurse -File | ForEach-Object {
               Copy-Item $_.FullName "vdd/" -Force
@@ -131,8 +145,7 @@ jobs:
               Write-Host "VDD driver .inf found: $($infFiles.Name)"
             }
           } catch {
-            Write-Host "WARNING: Failed to download VDD: $_"
-            Write-Host "Installer will be built without VDD bundled"
+            throw "VDD download or verification failed: $_"
           }
 
       - name: Package artifact
@@ -173,32 +186,24 @@ jobs:
             Write-Host "VDD files bundled into portable artifact"
           }
 
-      - name: Install NSIS
+      - name: Install and verify NSIS
         shell: pwsh
         run: |
-          # Use portable NSIS ZIP from nsis.sourceforge.io (no installer needed)
           $nsisVersion = "3.10"
           $nsisUrl = "https://github.com/nicehash/NSIS/releases/download/v${nsisVersion}/nsis-${nsisVersion}.zip"
-          try {
-            Invoke-WebRequest -Uri $nsisUrl -OutFile "nsis.zip"
-          } catch {
-            # Fallback: try winget
-            Write-Host "GitHub download failed, trying winget..."
-            winget install NSIS.NSIS --accept-source-agreements --accept-package-agreements --silent
+          function Assert-Sha256([string]$Path, [string]$Expected) {
+            if ([string]::IsNullOrWhiteSpace($Expected)) { throw "Missing expected SHA-256 for $Path" }
+            $actual = (Get-FileHash -Algorithm SHA256 $Path).Hash.ToLowerInvariant()
+            if ($actual -ne $Expected.ToLowerInvariant()) { throw "SHA-256 mismatch for $Path: expected $Expected, got $actual" }
           }
-
-          if (Test-Path "nsis.zip") {
-            Expand-Archive -Path "nsis.zip" -DestinationPath "C:/nsis"
-            # Find the extracted folder (may be nsis-3.10/)
-            $nsisDir = Get-ChildItem "C:/nsis" -Directory | Select-Object -First 1
-            if ($nsisDir) {
-              echo "$($nsisDir.FullName)" >> $env:GITHUB_PATH
-              Write-Host "NSIS portable extracted to $($nsisDir.FullName)"
-            } else {
-              echo "C:/nsis" >> $env:GITHUB_PATH
-            }
+          Invoke-WebRequest -Uri $nsisUrl -OutFile "nsis.zip"
+          Assert-Sha256 "nsis.zip" "${env:NSIS_SHA256}"
+          Expand-Archive -Path "nsis.zip" -DestinationPath "C:/nsis"
+          $nsisDir = Get-ChildItem "C:/nsis" -Directory | Select-Object -First 1
+          if ($nsisDir) {
+            echo "$($nsisDir.FullName)" >> $env:GITHUB_PATH
           } else {
-            echo "C:\Program Files (x86)\NSIS" >> $env:GITHUB_PATH
+            throw "NSIS archive did not contain an install directory"
           }
 
       - name: Build installer

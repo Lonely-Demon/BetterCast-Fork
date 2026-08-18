@@ -8,11 +8,6 @@ class InputHandler {
     // Per-connection display bounds for multi-display routing
     private var displayBoundsMap: [UUID: CGRect] = [:]
 
-    // Fallback bounds if no connection-specific bounds found
-    private var fallbackOrigin: CGPoint = .zero
-    private var fallbackWidth: CGFloat = 1920
-    private var fallbackHeight: CGFloat = 1080
-
     func updateDisplayBounds(bounds: CGRect, for connectionId: UUID) {
         displayBoundsMap[connectionId] = bounds
         LogManager.shared.log("InputHandler: Updated bounds for connection \(connectionId.uuidString.prefix(8)): \(bounds)")
@@ -44,16 +39,12 @@ class InputHandler {
     private var logThrottle = 0
 
     func handle(event: InputEvent, for connectionId: UUID) {
-        let bounds: CGRect
-        let usingFallback: Bool
-        if let b = displayBoundsMap[connectionId] {
-            bounds = b
-            usingFallback = false
-        } else {
-            bounds = CGRect(origin: fallbackOrigin, size: CGSize(width: fallbackWidth, height: fallbackHeight))
-            usingFallback = true
-        }
+        guard event.isValidForTransport, event.type != .command else { return }
 
+        guard let bounds = displayBoundsMap[connectionId], bounds.width > 0, bounds.height > 0 else {
+            LogManager.shared.log("InputHandler: ignoring input without verified display bounds")
+            return
+        }
         let x = bounds.origin.x + (CGFloat(event.x) * bounds.width)
         let y = bounds.origin.y + (CGFloat(event.y) * bounds.height)
         let point = CGPoint(x: x, y: y)
@@ -62,7 +53,7 @@ class InputHandler {
         if event.type == .mouseMove {
             logThrottle += 1
             if logThrottle % 60 == 1 {
-                LogManager.shared.log("InputHandler: move → (\(Int(x)),\(Int(y))) bounds=\(bounds) fallback=\(usingFallback) conn=\(connectionId.uuidString.prefix(8))")
+                LogManager.shared.log("InputHandler: move → (\(Int(x)),\(Int(y))) bounds=\(bounds) conn=\(connectionId.uuidString.prefix(8))")
             }
         }
         

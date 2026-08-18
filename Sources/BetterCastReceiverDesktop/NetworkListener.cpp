@@ -78,6 +78,15 @@ void NetworkListener::disconnectAll() {
     m_clients.clear();
     m_tcpBuffers.clear();
     m_connectionFormat.clear();
+    {
+        QMutexLocker lock(&m_udpMutex);
+        m_udpBuffer.clear();
+        m_udpBytesInFlight = 0;
+        m_udpPacketsSinceCleanup = 0;
+        m_udpPeerSet = false;
+        m_udpPeerAddress.clear();
+        m_udpPeerPort = 0;
+    }
     // Reset decoder so next connection starts fresh
     if (m_decoder) {
         m_decoder->reset();
@@ -111,6 +120,12 @@ void NetworkListener::connectTo(const QString& host, uint16_t port) {
 void NetworkListener::onNewTcpConnection() {
     while (m_tcpServer->hasPendingConnections()) {
         auto* socket = m_tcpServer->nextPendingConnection();
+        if (m_clients.size() >= kMaxClients) {
+            qWarning() << "Rejecting additional TCP client from" << socket->peerAddress().toString();
+            socket->disconnectFromHost();
+            socket->deleteLater();
+            continue;
+        }
         socket->setSocketOption(QAbstractSocket::LowDelayOption, 1);
         socket->setSocketOption(QAbstractSocket::KeepAliveOption, 1);
 
@@ -118,6 +133,10 @@ void NetworkListener::onNewTcpConnection() {
         m_clients.append(socket);
         m_tcpBuffers[socket] = QByteArray();
         m_connectionFormat[socket] = -1; // auto-detect on first frame
+        if (!m_udpPeerSet) {
+            m_udpPeerAddress = socket->peerAddress();
+            m_udpPeerSet = true;
+        }
 
         connect(socket, &QTcpSocket::readyRead, this, &NetworkListener::onTcpReadyRead);
         connect(socket, &QTcpSocket::disconnected, this, &NetworkListener::onTcpDisconnected);
@@ -154,12 +173,20 @@ void NetworkListener::processTcpBuffer(QTcpSocket* socket) {
         uint32_t length = qFromBigEndian<uint32_t>(
             reinterpret_cast<const uchar*>(buffer.constData() + consumed));
 
-        // Sanity check: single frame should never exceed 8MB
+        // Zero-length frames would otherwise permit a busy loop.
+        if (length == 0) {
+            qWarning() << "TCP framing error: zero-length packet — disconnecting";
+            buffer.clear();
+            socket->disconnectFromHost();
+            return;
+        }
+
+        // Sanity check: single frame should never exceed 8MB.
         if (length > kMaxPacketSize) {
             qWarning() << "TCP framing error: packet length" << length
-                        << "exceeds max" << kMaxPacketSize << "— resetting buffer";
+                        << "exceeds max" << kMaxPacketSize << "— disconnecting";
             buffer.clear();
-            consumed = 0;
+            socket->disconnectFromHost();
             return;
         }
 
@@ -170,6 +197,12 @@ void NetworkListener::processTcpBuffer(QTcpSocket* socket) {
 
         QByteArray body = buffer.mid(consumed + 4, static_cast<int>(length));
         consumed += totalNeeded;
+
+        if (body.isEmpty()) {
+            qWarning() << "TCP framing error: empty body — disconnecting";
+            socket->disconnectFromHost();
+            return;
+        }
 
         // Auto-detect framing format on first frame per connection.
         // Type-byte format (Mac sender): [0x01=video|0x02=audio][payload]
@@ -192,11 +225,18 @@ void NetworkListener::processTcpBuffer(QTcpSocket* socket) {
                 handleVideoData(body.mid(1), false);  // type-byte framing: no PTS prefix
             } else if (typeByte == 0x02) {
                 handleAudioData(body.mid(1));
+            } else {
+                qWarning() << "TCP framing error: unknown type — disconnecting";
+                socket->disconnectFromHost();
+                return;
             }
-            // else: unknown type, skip
-        } else {
+        } else if (body.size() >= 8) {
             // Legacy: has 8-byte PTS prefix
             handleVideoData(body, true);
+        } else {
+            qWarning() << "TCP framing error: legacy body too short — disconnecting";
+            socket->disconnectFromHost();
+            return;
         }
     }
 
@@ -243,6 +283,15 @@ void NetworkListener::onTcpDisconnected() {
     m_clients.removeAll(socket);
     m_tcpBuffers.remove(socket);
     m_connectionFormat.remove(socket);
+    if (m_clients.isEmpty()) {
+        QMutexLocker lock(&m_udpMutex);
+        m_udpBuffer.clear();
+        m_udpBytesInFlight = 0;
+        m_udpPacketsSinceCleanup = 0;
+        m_udpPeerSet = false;
+        m_udpPeerAddress.clear();
+        m_udpPeerPort = 0;
+    }
     socket->deleteLater();
 
     if (m_clients.isEmpty()) {
@@ -257,18 +306,28 @@ void NetworkListener::onTcpDisconnected() {
 
 void NetworkListener::onUdpReadyRead() {
     while (m_udpSocket->hasPendingDatagrams()) {
+        const qint64 pendingSize = m_udpSocket->pendingDatagramSize();
+        if (pendingSize <= 8 || pendingSize > (kMaxUdpPayloadSize + 8)) {
+            char discard = 0;
+            m_udpSocket->readDatagram(&discard, 1);
+            qWarning() << "Dropping invalid UDP datagram size" << pendingSize;
+            continue;
+        }
+
         QByteArray datagram;
-        datagram.resize(static_cast<int>(m_udpSocket->pendingDatagramSize()));
-        m_udpSocket->readDatagram(datagram.data(), datagram.size());
+        datagram.resize(static_cast<int>(pendingSize));
+        QHostAddress senderAddress;
+        uint16_t senderPort = 0;
+        m_udpSocket->readDatagram(datagram.data(), datagram.size(), &senderAddress, &senderPort);
 
         if (!datagram.isEmpty()) {
-            handleUdpPacket(datagram);
+            handleUdpPacket(datagram, senderAddress, senderPort);
         }
     }
 }
 
-void NetworkListener::handleUdpPacket(const QByteArray& data) {
-    if (data.size() <= 8) return;
+void NetworkListener::handleUdpPacket(const QByteArray& data, const QHostAddress& senderAddress, uint16_t senderPort) {
+    if (data.size() <= 8 || data.size() > kMaxUdpPayloadSize + 8) return;
 
     const uchar* raw = reinterpret_cast<const uchar*>(data.constData());
     uint32_t frameId = qFromBigEndian<uint32_t>(raw);
@@ -278,6 +337,21 @@ void NetworkListener::handleUdpPacket(const QByteArray& data) {
     QByteArray payload = data.mid(8);
 
     QMutexLocker lock(&m_udpMutex);
+
+    if (m_udpPeerSet && (senderAddress != m_udpPeerAddress ||
+                          (m_udpPeerPort != 0 && senderPort != m_udpPeerPort))) {
+        return;
+    }
+    if (!m_udpPeerSet) {
+        m_udpPeerAddress = senderAddress;
+        m_udpPeerPort = senderPort;
+        m_udpPeerSet = true;
+    }
+
+    if (totalChunks == 0 || totalChunks > kMaxUdpChunks || chunkId >= totalChunks) {
+        qWarning() << "Dropping invalid UDP chunk metadata" << chunkId << totalChunks;
+        return;
+    }
 
     if (m_lastDecodedFrameId == 0) {
         m_lastDecodedFrameId = frameId - 1;
@@ -296,15 +370,43 @@ void NetworkListener::handleUdpPacket(const QByteArray& data) {
     }
 
     if (!m_udpBuffer.contains(frameId)) {
+        if (m_udpBuffer.size() >= kMaxUdpFramesInFlight ||
+            m_udpBytesInFlight + payload.size() > kMaxUdpBytesInFlight) {
+            qWarning() << "Dropping UDP frame: reassembly budget exhausted";
+            return;
+        }
         UdpFrameEntry entry;
         entry.totalChunks = totalChunks;
         entry.timestamp = now;
         m_udpBuffer[frameId] = entry;
     }
 
-    m_udpBuffer[frameId].chunks[chunkId] = payload;
+    UdpFrameEntry& entry = m_udpBuffer[frameId];
+    if (entry.totalChunks != totalChunks) {
+        qWarning() << "Dropping UDP frame with inconsistent chunk count";
+        m_udpBytesInFlight -= entry.totalBytes;
+        m_udpBuffer.remove(frameId);
+        return;
+    }
 
-    if (m_udpBuffer[frameId].chunks.size() == m_udpBuffer[frameId].totalChunks) {
+    if (!entry.chunks.contains(chunkId)) {
+        if (m_udpBytesInFlight + payload.size() > kMaxUdpBytesInFlight) return;
+        entry.totalBytes += payload.size();
+        m_udpBytesInFlight += payload.size();
+        entry.chunks.insert(chunkId, payload);
+    }
+
+    bool complete = entry.chunks.size() == entry.totalChunks;
+    if (complete) {
+        for (uint16_t expected = 0; expected < totalChunks; ++expected) {
+            if (!entry.chunks.contains(expected)) {
+                complete = false;
+                break;
+            }
+        }
+    }
+
+    if (complete) {
         m_udpFramesReassembled++;
 
         // Gap detection — request IDR if frames were skipped
@@ -318,16 +420,14 @@ void NetworkListener::handleUdpPacket(const QByteArray& data) {
         }
         m_lastDecodedFrameId = frameId;
 
-        // Reassemble in chunk order
-        auto& entry = m_udpBuffer[frameId];
-        QList<uint16_t> keys = entry.chunks.keys();
-        std::sort(keys.begin(), keys.end());
-
+        // Reassemble in validated chunk order.
         QByteArray fullData;
-        for (uint16_t k : keys) {
-            fullData.append(entry.chunks[k]);
+        fullData.reserve(entry.totalBytes);
+        for (uint16_t expected = 0; expected < totalChunks; ++expected) {
+            fullData.append(entry.chunks.value(expected));
         }
 
+        m_udpBytesInFlight -= entry.totalBytes;
         m_udpBuffer.remove(frameId);
 
         // Unlock before decode (decode may be slow)
@@ -336,17 +436,19 @@ void NetworkListener::handleUdpPacket(const QByteArray& data) {
         return;
     }
 
-    // Periodic cleanup of stale incomplete frames
-    if (m_udpPacketsReceived % 100 == 0) {
+    // Periodic cleanup of stale incomplete frames.
+    if (++m_udpPacketsSinceCleanup >= 100) {
         QList<uint32_t> staleKeys;
-        for (auto it = m_udpBuffer.begin(); it != m_udpBuffer.end(); ++it) {
+        for (auto it = m_udpBuffer.cbegin(); it != m_udpBuffer.cend(); ++it) {
             if (it->timestamp.msecsTo(now) > 1000) {
                 staleKeys.append(it.key());
             }
         }
         for (uint32_t key : staleKeys) {
+            m_udpBytesInFlight -= m_udpBuffer.value(key).totalBytes;
             m_udpBuffer.remove(key);
         }
+        m_udpPacketsSinceCleanup = 0;
     }
 }
 

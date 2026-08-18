@@ -4,6 +4,7 @@
 #include <QTcpSocket>
 #include <QTimer>
 #include <QByteArray>
+#include <QDateTime>
 #include <cstdint>
 
 // TCP client that sends video/audio data using BetterCast wire protocol.
@@ -35,5 +36,8 @@ private:
     uint16_t m_port = 0;
     int m_retryCount = 0;
     static constexpr int MaxRetries = 4;
+    static constexpr qint64 MaxQueuedBytes = 16 * 1024 * 1024;
+    static constexpr qint64 MaxPayloadBytes = 8 * 1024 * 1024;
     QTimer m_retryTimer;
+    QDateTime m_lastBackpressureLog;
 };

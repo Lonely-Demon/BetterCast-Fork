@@ -28,7 +28,7 @@ static void ensureFirewallRule() {
                           "name=BetterCast mDNS In",
                           "dir=in", "action=allow", "protocol=UDP",
                           "localport=5353",
-                          "profile=private,public",
+                          "profile=private", "remoteip=localsubnet",
                           "description=Allow inbound mDNS for BetterCast auto-discovery"});
     addIn.waitForFinished(3000);
 
@@ -38,7 +38,7 @@ static void ensureFirewallRule() {
                            "name=BetterCast mDNS Out",
                            "dir=out", "action=allow", "protocol=UDP",
                            "remoteport=5353",
-                           "profile=private,public",
+                           "profile=private", "remoteip=localsubnet",
                            "description=Allow outbound mDNS for BetterCast auto-discovery"});
     addOut.waitForFinished(3000);
 
@@ -48,7 +48,7 @@ static void ensureFirewallRule() {
                             "name=BetterCast Receiver",
                             "dir=in", "action=allow", "protocol=TCP",
                             "localport=51820",
-                            "profile=private,public",
+                            "profile=private", "remoteip=localsubnet",
                             "description=Allow BetterCast screen streaming"});
     addTcp.waitForFinished(3000);
 

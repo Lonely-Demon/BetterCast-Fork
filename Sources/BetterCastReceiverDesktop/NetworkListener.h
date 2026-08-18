@@ -9,6 +9,7 @@
 #include <QHash>
 #include <QByteArray>
 #include <QDateTime>
+#include <QHostAddress>
 
 #include "InputEvent.h"
 
@@ -49,7 +50,7 @@ private:
     void processTcpBuffer(QTcpSocket* socket);
     void handleVideoData(const QByteArray& data, bool hasPtsPrefix = true);
     void handleAudioData(const QByteArray& data);
-    void handleUdpPacket(const QByteArray& data);
+    void handleUdpPacket(const QByteArray& data, const QHostAddress& senderAddress, uint16_t senderPort);
 
     // TCP
     QTcpServer* m_tcpServer = nullptr;
@@ -66,15 +67,26 @@ private:
     static constexpr uint16_t kDefaultUdpPort = 51821;
     static constexpr uint32_t kMaxPacketSize = 8 * 1024 * 1024;   // 8MB per frame max
     static constexpr int kMaxBufferSize = 32 * 1024 * 1024;       // 32MB buffer limit
+    static constexpr uint16_t kMaxUdpChunks = 2048;
+    static constexpr int kMaxUdpFramesInFlight = 16;
+    static constexpr int kMaxUdpBytesInFlight = 32 * 1024 * 1024;
+    static constexpr int kMaxUdpPayloadSize = 64 * 1024 - 8;
+    static constexpr int kMaxClients = 1;
 
     // UDP reassembly
     struct UdpFrameEntry {
         int totalChunks = 0;
+        int totalBytes = 0;
         QHash<uint16_t, QByteArray> chunks;
         QDateTime timestamp;
     };
     QHash<uint32_t, UdpFrameEntry> m_udpBuffer;
     QMutex m_udpMutex;
+    int m_udpBytesInFlight = 0;
+    int m_udpPacketsSinceCleanup = 0;
+    QHostAddress m_udpPeerAddress;
+    uint16_t m_udpPeerPort = 0;
+    bool m_udpPeerSet = false;
     uint32_t m_lastDecodedFrameId = 0;
     QDateTime m_lastKeyframeRequest;
 

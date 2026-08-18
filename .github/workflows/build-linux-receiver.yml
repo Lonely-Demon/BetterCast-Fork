@@ -10,6 +10,9 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   QT_VERSION: '6.7.0'
+  LINUXDEPLOY_VERSION: '1-alpha-20251107-1'
+  ADB_LINUX_SHA256: ${{ vars.BETTERCAST_ADB_LINUX_SHA256 }}
+  LINUXDEPLOY_SHA256: 'c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d'
 
 jobs:
   build-linux:
@@ -114,16 +117,14 @@ jobs:
           SCRIPT
           chmod +x "$APPDIR/AppRun"
 
-      - name: Download ADB platform-tools
+      - name: Download and verify ADB platform-tools
         run: |
-          wget -q "https://dl.google.com/android/repository/platform-tools-latest-linux.zip" \
-            -O platform-tools.zip
+          set -euo pipefail
+          : "${ADB_LINUX_SHA256:?BETTERCAST_ADB_LINUX_SHA256 repository variable is required}"
+          wget -q "https://dl.google.com/android/repository/platform-tools-latest-linux.zip" -O platform-tools.zip
+          echo "${ADB_LINUX_SHA256}  platform-tools.zip" | sha256sum --check --status
           unzip -q platform-tools.zip
-          if [ -f "platform-tools/adb" ]; then
-            echo "ADB downloaded successfully"
-          else
-            echo "WARNING: adb not found in download"
-          fi
+          test -f "platform-tools/adb"
 
       - name: Bundle ADB into AppDir
         run: |
@@ -156,10 +157,11 @@ jobs:
           cp "$Qt6_DIR/plugins/platforms/libqxcb.so" "$APPDIR/usr/plugins/platforms/" 2>/dev/null || true
           cp "$Qt6_DIR/plugins/xcbglintegrations/"*.so "$APPDIR/usr/plugins/xcbglintegrations/" 2>/dev/null || true
 
-      - name: Download linuxdeploy and build AppImage
+      - name: Download, verify, and run linuxdeploy
         run: |
-          # Download linuxdeploy AppImage tool
-          wget -q "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage"
+          set -euo pipefail
+          wget -q "https://github.com/linuxdeploy/linuxdeploy/releases/download/${LINUXDEPLOY_VERSION}/linuxdeploy-x86_64.AppImage"
+          echo "${LINUXDEPLOY_SHA256}  linuxdeploy-x86_64.AppImage" | sha256sum --check --status
           chmod +x linuxdeploy-x86_64.AppImage
 
           # Build the AppImage

@@ -2,6 +2,7 @@ package com.bettercast.receiver.input
 
 import kotlinx.serialization.Serializable
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.math.abs
 
 @Serializable
 data class InputEvent(
@@ -98,5 +99,19 @@ data class InputEvent(
             TYPE_RIGHT_MOUSE_DOWN, TYPE_RIGHT_MOUSE_UP,
             TYPE_KEY_DOWN, TYPE_KEY_UP, TYPE_COMMAND
         )
+        fun isValid(event: InputEvent): Boolean {
+            val knownType = event.type in setOf(
+                TYPE_MOUSE_MOVE, TYPE_LEFT_MOUSE_DOWN, TYPE_LEFT_MOUSE_UP,
+                TYPE_RIGHT_MOUSE_DOWN, TYPE_RIGHT_MOUSE_UP, TYPE_KEY_DOWN,
+                TYPE_KEY_UP, TYPE_SCROLL_WHEEL, TYPE_COMMAND
+            )
+            if (!knownType || event.eventId <= 0L || event.keyCode !in 0..0xFFFF) return false
+            if (event.type == TYPE_COMMAND && event.keyCode !in setOf(COMMAND_HEARTBEAT, COMMAND_REQUEST_KEYFRAME, 777)) return false
+            if (!event.x.isFinite() || !event.y.isFinite() ||
+                !event.deltaX.isFinite() || !event.deltaY.isFinite()) return false
+            if (event.type != TYPE_COMMAND && (event.x !in 0.0..1.0 || event.y !in 0.0..1.0)) return false
+            if (abs(event.deltaX) > 10_000.0 || abs(event.deltaY) > 10_000.0) return false
+            return true
+        }
     }
 }

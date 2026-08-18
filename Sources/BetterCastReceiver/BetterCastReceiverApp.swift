@@ -354,6 +354,13 @@ class NetworkListener: ObservableObject, VideoDecoderDelegate {
     }
 
     private let networkQueue = DispatchQueue(label: "com.bettercast.network", qos: .userInteractive)
+    private static let maxTCPFrameLength = 8 * 1024 * 1024
+    private static let maxUDPChunks: UInt16 = 2048
+    private static let maxUDPFramesInFlight = 16
+    private static let maxUDPBytesInFlight = 32 * 1024 * 1024
+    private static let maxUDPPayloadSize = 64 * 1024 - 8
+    private var activeTCPConnectionID: ObjectIdentifier?
+    private var activeUDPConnectionID: ObjectIdentifier?
 
     // Dependencies
     var videoRenderer: VideoRenderer?
@@ -689,23 +696,25 @@ class NetworkListener: ObservableObject, VideoDecoderDelegate {
     }
     
     private func handleNewConnection(_ connection: NWConnection, type: ConnectionType) {
+        let connectionID = ObjectIdentifier(connection)
         connection.stateUpdateHandler = { [weak self] state in
             switch state {
             case .ready:
                 LogManager.shared.log("Receiver: \(type) Connection ready")
+                if type == .tcp {
+                    if let active = self?.activeTCPConnectionID, active != connectionID { connection.cancel(); return }
+                    self?.activeTCPConnectionID = connectionID
+                } else if type == .udp {
+                    if let active = self?.activeUDPConnectionID, active != connectionID { connection.cancel(); return }
+                    self?.activeUDPConnectionID = connectionID
+                }
                 DispatchQueue.main.async {
                     if let self = self {
                         if !self.connectedClients.contains(where: { $0 === connection }) {
                             self.connectedClients.append(connection)
                         }
-                        // Enable wireless ADB in background once streaming is working
-                        if self.lastADBPort != nil && !self.wirelessADBEnabled,
-                           let adb = self.lastADBPath {
-                            self.wirelessADBEnabled = true
-                            DispatchQueue.global(qos: .utility).async {
-                                self.enableWirelessADB(adb: adb, serial: self.lastADBSerial)
-                            }
-                        }
+                        // Wireless ADB changes device network exposure and must be explicit.
+                        // Do not enable it merely because a peer connection became ready.
                     }
                 }
                 if type == .udp {
@@ -727,32 +736,33 @@ class NetworkListener: ObservableObject, VideoDecoderDelegate {
     }
     
     private func receiveTCP(on connection: NWConnection) {
-        // TCP is reliable, no changes needed other than queue
-        connection.receive(minimumIncompleteLength: 4, maximumLength: 4) { [weak self] content, contentContext, isComplete, error in
-            if let error = error {
-                LogManager.shared.log("Receiver (TCP): Error \(error)")
+        connection.receive(minimumIncompleteLength: 4, maximumLength: 4) { [weak self] content, _, isComplete, error in
+            guard error == nil, !isComplete, let content, content.count == 4 else {
+                connection.cancel()
                 return
             }
-            
-            if let content = content, content.count == 4 {
-                let length = content.withUnsafeBytes { $0.load(as: UInt32.self).bigEndian }
-                let bodyLength = Int(length)
-                
-                connection.receive(minimumIncompleteLength: bodyLength, maximumLength: bodyLength) { body, bodyContext, isComplete, error in
-                    if let body = body {
-                         self?.videoDecoder?.decode(data: body)
-                    }
-                    self?.receiveTCP(on: connection)
+            let length = content.reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+            guard length > 0, length <= NetworkListener.maxTCPFrameLength else {
+                LogManager.shared.log("Receiver (TCP): invalid frame length; closing connection")
+                connection.cancel()
+                return
+            }
+            let bodyLength = Int(length)
+            connection.receive(minimumIncompleteLength: bodyLength, maximumLength: bodyLength) { body, _, bodyComplete, bodyError in
+                guard bodyError == nil, !bodyComplete, let body, body.count == bodyLength else {
+                    connection.cancel()
+                    return
                 }
-            } else {
-                 self?.receiveTCP(on: connection)
+                self?.videoDecoder?.decode(data: body)
+                self?.receiveTCP(on: connection)
             }
         }
     }
-    
+
     // UDP Reassembly Buffer
-    private var udpBuffer: [UInt32: (total: Int, chunks: [UInt16: Data], time: Date)] = [:]
+    private var udpBuffer: [UInt32: (total: Int, bytes: Int, chunks: [UInt16: Data], time: Date)] = [:]
     private let udpLock = NSLock()
+    private var udpBytesInFlight = 0
     
     // Stats
     private var udpPacketsReceived = 0
@@ -769,7 +779,7 @@ class NetworkListener: ObservableObject, VideoDecoderDelegate {
             }
             
             if let content = content, !content.isEmpty {
-                 self?.handleUDPPacket(content)
+                 self?.handleUDPPacket(content, connection: connection)
             }
             self?.receiveUDP(on: connection) // Loop
         }
@@ -778,84 +788,73 @@ class NetworkListener: ObservableObject, VideoDecoderDelegate {
     private var lastDecodedFrameId: UInt32 = 0
     private var lastKeyframeRequest = Date.distantPast
     
-    private func handleUDPPacket(_ data: Data) {
-        guard data.count > 8 else { return } // Min header size
-        
-        let header = data.prefix(8)
-        let payload = data.dropFirst(8)
-        
-        let frameID = header.withUnsafeBytes { $0.load(fromByteOffset: 0, as: UInt32.self).bigEndian }
-        let chunkID = header.withUnsafeBytes { $0.load(fromByteOffset: 4, as: UInt16.self).bigEndian }
-        let totalChunks = header.withUnsafeBytes { $0.load(fromByteOffset: 6, as: UInt16.self).bigEndian }
-        
-        // Lock not strictly needed if we are on serial queue, but good for safety
+    private func handleUDPPacket(_ data: Data, connection: NWConnection) {
+        guard data.count > 8, data.count <= Self.maxUDPPayloadSize + 8 else { return }
+        func readUInt16(_ offset: Int) -> UInt16 {
+            (UInt16(data[offset]) << 8) | UInt16(data[offset + 1])
+        }
+        func readUInt32(_ offset: Int) -> UInt32 {
+            (UInt32(data[offset]) << 24) |
+            (UInt32(data[offset + 1]) << 16) |
+            (UInt32(data[offset + 2]) << 8) |
+            UInt32(data[offset + 3])
+        }
+        let frameID = readUInt32(0)
+        let chunkID = readUInt16(4)
+        let totalChunks = readUInt16(6)
+        guard totalChunks > 0, totalChunks <= Self.maxUDPChunks, chunkID < totalChunks else { return }
+        let payload = Data(data.dropFirst(8))
+        var completedFrame: Data?
+
         udpLock.lock()
         defer { udpLock.unlock() }
-        
-        // Init state on first frame
-        if lastDecodedFrameId == 0 { lastDecodedFrameId = frameID &- 1 }
-        
-        udpPacketsReceived += 1
-        
-        // Stats logging every 3 seconds
-        if Date().timeIntervalSince(lastStatsTime) > 3.0 {
-            LogManager.shared.log("Stats (3s): UDP Pkts: \(udpPacketsReceived), Frames Built: \(udpFramesReassembled), Drops/Pending: \(udpFramesIncomplete)")
-            udpPacketsReceived = 0
-            udpFramesReassembled = 0
-            udpFramesIncomplete = 0
-            lastStatsTime = Date()
-        }
-        
+        guard activeTCPConnectionID != nil,
+              activeUDPConnectionID == ObjectIdentifier(connection) else { return }
+
         if udpBuffer[frameID] == nil {
-            udpBuffer[frameID] = (total: Int(totalChunks), chunks: [:], time: Date())
+            guard udpBuffer.count < Self.maxUDPFramesInFlight,
+                  udpBytesInFlight + payload.count <= Self.maxUDPBytesInFlight else { return }
+            udpBuffer[frameID] = (total: Int(totalChunks), bytes: 0, chunks: [:], time: Date())
         }
-        
-        udpBuffer[frameID]?.chunks[chunkID] = payload
-        
-        if let entry = udpBuffer[frameID], entry.chunks.count == entry.total {
-            udpFramesReassembled += 1
-            
-            // Gap Detection
-            let diff = Int(frameID) - Int(lastDecodedFrameId)
-            if diff > 1 && diff < 1000 { 
-                 // Throttle to 2.0s to match Sender's keyframe limit
-                 if Date().timeIntervalSince(lastKeyframeRequest) > 2.0 {
-                     LogManager.shared.log("Receiver: Frame Gap Detected (\(lastDecodedFrameId) -> \(frameID)). Requesting IDR.")
-                     sendInputEvent(InputEvent(type: .command, keyCode: 999))
-                     lastKeyframeRequest = Date()
-                 }
-            }
-            lastDecodedFrameId = frameID
-            
-            // Reassembly complete
-            let sortedChunks = entry.chunks.sorted { $0.key < $1.key }
-            var fullData = Data()
-            for (_, chunkData) in sortedChunks {
-                fullData.append(chunkData)
-            }
-            
-            // Decode on this serial queue (VideoDecoder uses Async Decompression, so it won't block long)
-            self.videoDecoder?.decode(data: fullData)
+        guard var entry = udpBuffer[frameID], entry.total == Int(totalChunks) else {
+            udpBytesInFlight -= udpBuffer[frameID]?.bytes ?? 0
             udpBuffer.removeValue(forKey: frameID)
-            
-        } else {
-             // Incomplete
-             udpFramesIncomplete = udpBuffer.count 
+            return
         }
-        
-        // Periodic Cleanup
-        if udpPacketsReceived % 100 == 0 {
-             for (key, val) in udpBuffer {
-                if val.time.timeIntervalSinceNow < -1.0 { 
-                    udpBuffer.removeValue(forKey: key)
-                }
+        if entry.chunks[chunkID] == nil {
+            guard udpBytesInFlight + payload.count <= Self.maxUDPBytesInFlight else { return }
+            entry.chunks[chunkID] = payload
+            entry.bytes += payload.count
+            udpBytesInFlight += payload.count
+            udpBuffer[frameID] = entry
+        }
+        guard entry.chunks.count == entry.total,
+              (0..<entry.total).allSatisfy({ entry.chunks[UInt16($0)] != nil }) else { return }
+
+        var fullData = Data()
+        fullData.reserveCapacity(entry.bytes)
+        for index in 0..<entry.total { fullData.append(entry.chunks[UInt16(index)]!) }
+        udpBytesInFlight -= entry.bytes
+        udpBuffer.removeValue(forKey: frameID)
+        completedFrame = fullData
+
+        if let completedFrame {
+            DispatchQueue.main.async { [weak self] in
+                self?.videoDecoder?.decode(data: completedFrame)
             }
         }
     }
-    
+
     private func removeConnection(_ connection: NWConnection) {
+        let connectionID = ObjectIdentifier(connection)
         DispatchQueue.main.async {
             self.connectedClients.removeAll(where: { $0 === connection })
+            if self.activeTCPConnectionID == connectionID { self.activeTCPConnectionID = nil }
+            if self.activeUDPConnectionID == connectionID { self.activeUDPConnectionID = nil }
+            self.udpLock.lock()
+            self.udpBuffer.removeAll(keepingCapacity: false)
+            self.udpBytesInFlight = 0
+            self.udpLock.unlock()
             self.wirelessADBEnabled = false // Reset so it can be re-enabled on reconnect
             // Auto-reconnect if this was an ADB connection and no clients remain
             if self.connectedClients.isEmpty && self.lastADBPort != nil {

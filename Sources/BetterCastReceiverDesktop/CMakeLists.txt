@@ -9,6 +9,8 @@ set(CMAKE_AUTOUIC ON)
 
 # Sender mode (screen capture + encode + stream)
 option(ENABLE_SENDER "Enable sender mode (screen capture + H.264 encode)" OFF)
+option(ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+option(ENABLE_STRICT_WARNINGS "Enable strict compiler warnings" ON)
 
 # Qt6 components
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network OpenGLWidgets Multimedia)
@@ -155,6 +157,19 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/appicon.ico")
 endif()
 
 add_executable(BetterCastReceiver ${SOURCES} ${HEADERS} ${RESOURCES})
+
+if(ENABLE_STRICT_WARNINGS)
+    if(MSVC)
+        target_compile_options(BetterCastReceiver PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(BetterCastReceiver PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+endif()
+
+if(ENABLE_SANITIZERS AND NOT MSVC)
+    target_compile_options(BetterCastReceiver PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(BetterCastReceiver PRIVATE -fsanitize=address,undefined)
+endif()
 
 target_include_directories(BetterCastReceiver PRIVATE
     ${FFMPEG_ALL_INCLUDE_DIRS}
