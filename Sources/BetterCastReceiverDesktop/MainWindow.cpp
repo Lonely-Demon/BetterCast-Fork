@@ -309,6 +309,15 @@ MainWindow::MainWindow(QWidget* parent)
 
     setupUi();
 
+    connect(m_renderer, &VideoRenderer::graphicsInitializationFailed,
+            this, [this](const QString& reason) {
+                LogManager::instance().log("Graphics initialization failed: " + reason);
+                if (m_recvStatusLabel) {
+                    m_recvStatusLabel->setText("Graphics unavailable — try --software-opengl");
+                    m_recvStatusLabel->setStyleSheet("font-size: 14px; font-weight: bold; color: #ff9800;");
+                }
+            });
+
     // Start services
     m_network->start();
     uint16_t actualPort = m_network->actualTcpPort();
@@ -1134,19 +1143,8 @@ void MainWindow::onConnectionEstablished() {
         }
     });
 
-    if (m_adbHelper->wasAdbConnection() && !m_wirelessAdbEnabled) {
-        // Delay wireless ADB by 5 seconds — adb tcpip 5555 temporarily kills
-        // the USB connection (and our forward tunnel). Give the stream time to
-        // start before we switch to wireless mode.
-        QTimer::singleShot(5000, this, [this]() {
-            if (m_wirelessAdbEnabled) return; // already done
-            m_wirelessAdbEnabled = true;
-            LogManager::instance().log("Enabling wireless ADB (USB can be disconnected after)...");
-            std::thread([this]() {
-                m_adbHelper->enableWirelessAdb();
-            }).detach();
-        });
-    }
+    // Wireless ADB changes device network exposure and must be an explicit user action.
+    // Do not enable it automatically merely because a stream connection succeeded.
 }
 
 void MainWindow::onConnectionLost() {

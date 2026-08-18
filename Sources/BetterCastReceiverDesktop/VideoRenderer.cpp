@@ -1,5 +1,6 @@
 #include "VideoRenderer.h"
 #include "MainWindow.h"  // for LogManager
+#include <QOpenGLContext>
 #include <QDebug>
 
 extern "C" {
@@ -67,31 +68,68 @@ VideoRenderer::~VideoRenderer() {
 }
 
 void VideoRenderer::initializeGL() {
+    if (!QOpenGLContext::currentContext()) {
+        const QString reason = "No current OpenGL context was created. Install a compatible graphics driver or use the software renderer.";
+        qCritical() << reason;
+        emit graphicsInitializationFailed(reason);
+        return;
+    }
+
     initializeOpenGLFunctions();
 
-    qDebug() << "OpenGL version:" << reinterpret_cast<const char*>(glGetString(GL_VERSION));
-    qDebug() << "OpenGL renderer:" << reinterpret_cast<const char*>(glGetString(GL_RENDERER));
+    const auto* version = reinterpret_cast<const char*>(glGetString(GL_VERSION));
+    const auto* renderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
+    qDebug() << "OpenGL version:" << (version ? version : "unknown");
+    qDebug() << "OpenGL renderer:" << (renderer ? renderer : "unknown");
+    if (!version || !renderer) {
+        const QString reason = "The OpenGL context has no usable version or renderer information.";
+        qCritical() << reason;
+        emit graphicsInitializationFailed(reason);
+        return;
+    }
 
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 
-    // Compile shaders
+    // Compile shaders. Fail closed instead of continuing with an unusable program.
     m_program = new QOpenGLShaderProgram(this);
     if (!m_program->addShaderFromSourceCode(QOpenGLShader::Vertex, kVertexShaderSource)) {
-        qWarning() << "Vertex shader compile failed:" << m_program->log();
+        const QString reason = "Vertex shader compilation failed: " + m_program->log();
+        qCritical() << reason;
+        emit graphicsInitializationFailed(reason);
+        delete m_program;
+        m_program = nullptr;
+        return;
     }
     if (!m_program->addShaderFromSourceCode(QOpenGLShader::Fragment, kFragmentShaderSource)) {
-        qWarning() << "Fragment shader compile failed:" << m_program->log();
+        const QString reason = "Fragment shader compilation failed: " + m_program->log();
+        qCritical() << reason;
+        emit graphicsInitializationFailed(reason);
+        delete m_program;
+        m_program = nullptr;
+        return;
     }
     m_program->bindAttributeLocation("aPosition", 0);
     m_program->bindAttributeLocation("aTexCoord", 1);
     if (!m_program->link()) {
-        qWarning() << "Shader link failed:" << m_program->log();
+        const QString reason = "Shader link failed: " + m_program->log();
+        qCritical() << reason;
+        emit graphicsInitializationFailed(reason);
+        delete m_program;
+        m_program = nullptr;
+        return;
     }
 
     // Create VBO
     glGenBuffers(1, &m_vbo);
     glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
     glBufferData(GL_ARRAY_BUFFER, sizeof(kVertexData), kVertexData, GL_STATIC_DRAW);
+    if (glGetError() != GL_NO_ERROR) {
+        const QString reason = "The OpenGL driver rejected the renderer buffer setup.";
+        qCritical() << reason;
+        emit graphicsInitializationFailed(reason);
+        return;
+    }
+    m_graphicsReady = true;
 }
 
 void VideoRenderer::resizeGL(int w, int h) {
@@ -100,6 +138,7 @@ void VideoRenderer::resizeGL(int w, int h) {
 
 void VideoRenderer::paintGL() {
     glClear(GL_COLOR_BUFFER_BIT);
+    if (!m_graphicsReady || !m_program || !m_vbo) return;
 
     QMutexLocker lock(&m_frameMutex);
     if (!m_hasNewFrame && m_texWidth == 0) return;
@@ -249,6 +288,7 @@ void VideoRenderer::onFrameDecoded(AVFrame* frame) {
 }
 
 void VideoRenderer::createTextures(int width, int height) {
+    if (!m_graphicsReady || width <= 0 || height <= 0) return;
     deleteTextures();
 
     // Y texture (luminance, full resolution)

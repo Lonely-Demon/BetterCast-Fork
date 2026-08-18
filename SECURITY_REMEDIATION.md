@@ -241,3 +241,38 @@ The authenticated/encrypted session must be implemented as a coordinated protoco
 [17]: https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html "OWASP Input Validation Cheat Sheet"
 
 [18]: https://cheatsheetseries.owasp.org/cheatsheets/Denial_of_Service_Cheat_Sheet.html "OWASP Denial of Service Cheat Sheet"
+
+
+## Windows white-window diagnosis
+
+The supplied screenshot shows a window titled **BetterCast** with a black outer surface and a large unpainted white central region. The system image identifies Windows 10 Pro build 19045 on an Acer Aspire 4739Z with an Intel Pentium P6200. It does not show the exact display adapter or driver version, so the GPU diagnosis cannot be proven from the image alone; however, this is legacy hardware and is consistent with the class of OpenGL/driver compatibility problem found in the code.
+
+The application’s main window is built synchronously in `MainWindow::setupUi()` and should contain a sidebar, overview page, labels, cards, and controls before any peer connects. Video streaming is opened in a separate `VideoWindow` only after `connectionEstablished()`. Therefore, a central white/blank surface after waiting five to ten minutes is not explained by “waiting for a receiver” or a missing network stream. It is more consistent with either an incompatible/stale Windows binary or graphics initialization/rendering failure. The renderer requires a compatibility-profile OpenGL context, GLSL 1.20-style shaders, and legacy `GL_LUMINANCE`/`GL_LUMINANCE_ALPHA` texture formats. It had no visible failure state before this remediation.
+
+There is a concrete release packaging defect: the Windows workflow previously ran `windeployqt --no-opengl-sw`, which explicitly omits Qt’s software OpenGL fallback, and static inspection of the extracted release payload found no `opengl32sw.dll`. Qt documents that dynamic OpenGL loading can use this Mesa software renderer when system OpenGL is insufficient, and documents `Qt::AA_UseSoftwareOpenGL`/`QT_OPENGL=software` as the way to request it. [19] [20] On old Intel drivers, the missing fallback can produce an unusable OpenGL widget even though the process and window are created successfully.
+
+The remediation branch now includes a Windows-only `--software-opengl` launch option and `BETTERCAST_SOFTWARE_OPENGL=1` environment switch, both applied before `QApplication` construction; removes `--no-opengl-sw` from `windeployqt`; adds `opengl32sw.dll` to the expected deployment path; guards OpenGL context, shader, buffer, and texture initialization; and reports a visible “Graphics unavailable — try --software-opengl” status plus a detailed log message instead of silently continuing.
+
+### Recommended test on the affected machine
+
+Use a newly rebuilt package containing `opengl32sw.dll`. Open Command Prompt in the application directory and run:
+
+```text
+BetterCastReceiver.exe --software-opengl
+```
+
+If the packaged executable is not yet rebuilt, the switch cannot work unless a compatible Qt-provided `opengl32sw.dll` is placed beside the executable. Do not download a random DLL from a third-party DLL website. The preferred order is to install the latest graphics driver available for the exact display adapter, use a release rebuilt from this branch, and then test the explicit software-rendering switch.
+
+For diagnostics, run:
+
+```text
+set BETTERCAST_SOFTWARE_OPENGL=1
+set QSG_INFO=1
+BetterCastReceiver.exe --software-opengl
+```
+
+If the window remains blank, collect the exact display adapter and driver version from `dxdiag` or Device Manager, confirm whether `opengl32sw.dll` exists beside `BetterCastReceiver.exe`, and provide the BetterCast log. A continued blank window after software rendering is enabled would point to a stale/different binary, missing Qt platform plugins, or a separate Windows packaging problem rather than the video network path.
+
+[19]: https://doc.qt.io/qt-6/windows-graphics.html "Qt for Windows - Graphics Acceleration"
+
+[20]: https://doc.qt.io/qt-6/windows-deployment.html "Qt for Windows - Deployment"

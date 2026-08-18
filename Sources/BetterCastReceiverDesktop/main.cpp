@@ -1,5 +1,6 @@
 #include <QApplication>
 #include <QSurfaceFormat>
+#include <QCoreApplication>
 #include <QIcon>
 #include <QProcess>
 #include <QStandardPaths>
@@ -65,6 +66,25 @@ static void ensureFirewallRule() {
 #endif
 
 int main(int argc, char* argv[]) {
+    bool softwareOpenGL = false;
+#ifdef _WIN32
+    // Qt must choose the software OpenGL loader before QApplication is created.
+    // This is useful on legacy Intel drivers and can be enabled without changing
+    // the default hardware-accelerated path: BETTERCAST_SOFTWARE_OPENGL=1 or
+    // BetterCastReceiver.exe --software-opengl.
+    softwareOpenGL = qEnvironmentVariableIntValue("BETTERCAST_SOFTWARE_OPENGL") == 1;
+    for (int i = 1; i < argc; ++i) {
+        if (QString::fromLocal8Bit(argv[i]) == "--software-opengl") {
+            softwareOpenGL = true;
+        }
+    }
+    if (softwareOpenGL) {
+        QCoreApplication::setAttribute(Qt::AA_UseSoftwareOpenGL);
+        qputenv("QT_OPENGL", "software");
+        qputenv("QSG_INFO", "1");
+    }
+#endif
+
     // Use Compatibility Profile for GL_LUMINANCE/GL_LUMINANCE_ALPHA support
     // Core Profile removes these, breaking NV12 texture uploads on Windows
     QSurfaceFormat format;
@@ -74,6 +94,8 @@ int main(int argc, char* argv[]) {
     QSurfaceFormat::setDefaultFormat(format);
 
     QApplication app(argc, argv);
+    qInfo() << "BetterCast startup: Qt" << qVersion()
+            << "softwareOpenGL=" << (softwareOpenGL ? "yes" : "no");
     app.setApplicationName("BetterCast");
     app.setOrganizationName("BetterCast");
     app.setApplicationVersion("1.0.0");
