@@ -4,6 +4,7 @@ import android.app.Application
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.bettercast.receiver.control.BetterCastAccessibilityService
 import com.bettercast.receiver.input.InputEvent
 import com.bettercast.receiver.network.ConnectionState
 import com.bettercast.receiver.network.ServiceAdvertiser
@@ -38,6 +39,12 @@ class ReceiverViewModel(application: Application) : AndroidViewModel(application
     private val _connectedSenderName = MutableStateFlow<String?>(null)
     val connectedSenderName: StateFlow<String?> = _connectedSenderName.asStateFlow()
 
+    private val _phoneControlEnabled = MutableStateFlow(false)
+    val phoneControlEnabled: StateFlow<Boolean> = _phoneControlEnabled.asStateFlow()
+
+    private val _phoneControlStatus = MutableStateFlow("Phone Control is off")
+    val phoneControlStatus: StateFlow<String> = _phoneControlStatus.asStateFlow()
+
     private val _deviceIp = MutableStateFlow<String?>(null)
     val deviceIp: StateFlow<String?> = _deviceIp.asStateFlow()
 
@@ -55,11 +62,13 @@ class ReceiverViewModel(application: Application) : AndroidViewModel(application
                 when (connState) {
                     ConnectionState.CONNECTED -> {
                         wasConnected = true
+                        BetterCastAccessibilityService.setSessionArmed(_phoneControlEnabled.value)
                         _state.value = ReceiverState.CONNECTED
                         _statusMessage.value = "Connected to sender (TCP)"
                         _connectedSenderName.value = tcpServer.connectedSenderName.value
                     }
                     ConnectionState.LISTENING -> {
+                        BetterCastAccessibilityService.setSessionArmed(false)
                         // Only show waiting if UDP isn't connected either
                         if (udpClient?.isSenderConnected != true) {
                             if (wasConnected) {
@@ -75,6 +84,7 @@ class ReceiverViewModel(application: Application) : AndroidViewModel(application
                         }
                     }
                     ConnectionState.ERROR -> {
+                        BetterCastAccessibilityService.setSessionArmed(false)
                         _state.value = ReceiverState.ERROR
                         _statusMessage.value = tcpServer.errorMessage.value ?: "Connection error"
                     }
@@ -95,6 +105,12 @@ class ReceiverViewModel(application: Application) : AndroidViewModel(application
         // Wire TCP frame data to video decoder
         tcpServer.onFrameReceived = { data ->
             videoDecoder.onFrameData(data)
+        }
+        tcpServer.onControlReceived = { data ->
+            val accepted = BetterCastAccessibilityService.handleControlPayload(data)
+            if (!accepted) {
+                Log.w(TAG, "Rejected control packet: AccessibilityService disabled or session not armed")
+            }
         }
 
         // Start the server and advertise
@@ -138,6 +154,7 @@ class ReceiverViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun disconnect() {
+        BetterCastAccessibilityService.setSessionArmed(false)
         tcpServer.disconnect()
         udpClient?.stop()
         videoDecoder.stop()
@@ -167,6 +184,19 @@ class ReceiverViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    fun setPhoneControlEnabled(enabled: Boolean): Boolean {
+        if (enabled && !BetterCastAccessibilityService.isEnabled()) {
+            _phoneControlEnabled.value = false
+            _phoneControlStatus.value = "Enable BetterCast remote control in Android Settings first"
+            BetterCastAccessibilityService.setSessionArmed(false)
+            return false
+        }
+        _phoneControlEnabled.value = enabled
+        _phoneControlStatus.value = if (enabled) "Phone Control armed for this session" else "Phone Control is off"
+        BetterCastAccessibilityService.setSessionArmed(enabled && _state.value == ReceiverState.CONNECTED)
+        return true
+    }
+
     fun sendInputEvent(event: InputEvent) {
         if (_state.value != ReceiverState.CONNECTED) return
 
@@ -181,6 +211,7 @@ class ReceiverViewModel(application: Application) : AndroidViewModel(application
 
     /** Fully stop the receiver (release port). Used when switching to Sender mode. */
     fun stopReceiver() {
+        BetterCastAccessibilityService.setSessionArmed(false)
         serviceAdvertiser.stopAdvertising()
         tcpServer.stopListening()
         udpClient?.destroy()

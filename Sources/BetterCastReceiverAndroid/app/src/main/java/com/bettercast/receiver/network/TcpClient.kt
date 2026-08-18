@@ -149,6 +149,9 @@ class TcpClient {
 
     var onAudioReceived: ((ByteArray) -> Unit)? = null
 
+    /** Control messages are JSON payloads carried in packet type 0x03. */
+    var onControlReceived: ((ByteArray) -> Unit)? = null
+
     private fun startReadLoop() {
         readJob?.cancel()
         readJob = scope.launch {
@@ -193,6 +196,15 @@ class TcpClient {
                                 Log.i(TAG, "Audio packet #$audioCount: ${audioData.size} bytes")
                             }
                             onAudioReceived?.invoke(audioData)
+                            continue
+                        } else if (typeByte == 0x03 && buffer.size > 1) {
+                            // Control packet — bounded JSON payload, strip type byte.
+                            val controlData = buffer.copyOfRange(1, buffer.size)
+                            if (controlData.size <= 16 * 1024) {
+                                onControlReceived?.invoke(controlData)
+                            } else {
+                                Log.w(TAG, "Dropping oversized control packet: ${controlData.size} bytes")
+                            }
                             continue
                         }
                     }

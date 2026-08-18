@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">BetterCast Receiver</string>
+    <string name="bettercast_accessibility_description">Allows BetterCast to perform user-requested taps, swipes, scrolling, and approved navigation actions when Phone Control mode is explicitly enabled from a paired Windows device. BetterCast does not inspect window content or record accessibility events.</string>
 </resources>

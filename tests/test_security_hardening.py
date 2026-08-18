@@ -44,9 +44,23 @@ class SecurityHardeningRegressionTests(unittest.TestCase):
         self.assertIn("This PC is a receiver and is waiting for a sender", desktop)
         self.assertIn("Enter the sender's IP address (not this PC's address)", desktop)
         self.assertIn("tap Send at the top", desktop)
-        self.assertIn("This phone is in Receive mode. To cast this phone, tap Send at the top.", android_receiver)
+        self.assertIn("In Second Display mode it shows the Windows display", android_receiver)
+        self.assertIn("Phone Control requires the user-enabled BetterCast Accessibility Service", android_receiver)
         self.assertIn("Windows, Linux, or Mac BetterCast Receiver", android_sender)
         self.assertNotIn("On your Mac, run:", android_sender)
+
+    def test_android_phone_control_is_explicit_and_bounded(self):
+        manifest = self.read("Sources/BetterCastReceiverAndroid/app/src/main/AndroidManifest.xml")
+        service = self.read("Sources/BetterCastReceiverAndroid/app/src/main/java/com/bettercast/receiver/control/BetterCastAccessibilityService.kt")
+        tcp = self.read("Sources/BetterCastReceiverAndroid/app/src/main/java/com/bettercast/receiver/network/TcpClient.kt")
+        xml = self.read("Sources/BetterCastReceiverAndroid/app/src/main/res/xml/bettercast_accessibility_service.xml")
+        self.assertIn("BIND_ACCESSIBILITY_SERVICE", manifest)
+        self.assertIn("canPerformGestures", xml)
+        self.assertIn("MAX_CONTROL_BYTES", service)
+        self.assertIn("dispatchGlobalAction", service)
+        self.assertIn("typeByte == 0x03", tcp)
+        self.assertIn("setSessionArmed", service)
+        self.assertNotIn("canRetrieveWindowContent=\"true\"", xml)
 
     def test_installer_has_no_wildcard_executable_fallback(self):
         installer = self.read("Sources/BetterCastReceiverDesktop/installer.nsi")

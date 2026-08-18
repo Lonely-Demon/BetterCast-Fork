@@ -1,5 +1,7 @@
 package com.bettercast.receiver.ui
 
+import android.content.Intent
+import android.provider.Settings
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import androidx.compose.animation.AnimatedVisibility
@@ -34,6 +36,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import com.bettercast.receiver.input.TouchHandler
 import com.bettercast.receiver.viewmodel.ReceiverState
@@ -42,9 +45,12 @@ import kotlinx.coroutines.delay
 
 @Composable
 fun ReceiverScreen(viewModel: ReceiverViewModel) {
+    val context = LocalContext.current
     val state by viewModel.state.collectAsState()
     val statusMessage by viewModel.statusMessage.collectAsState()
     val deviceIp by viewModel.deviceIp.collectAsState()
+    val phoneControlEnabled by viewModel.phoneControlEnabled.collectAsState()
+    val phoneControlStatus by viewModel.phoneControlStatus.collectAsState()
 
     Box(
         modifier = Modifier
@@ -56,7 +62,13 @@ fun ReceiverScreen(viewModel: ReceiverViewModel) {
                 WaitingView(
                     statusMessage = statusMessage,
                     deviceIp = deviceIp,
-                    port = viewModel.tcpServer.listeningPort
+                    port = viewModel.tcpServer.listeningPort,
+                    phoneControlEnabled = phoneControlEnabled,
+                    phoneControlStatus = phoneControlStatus,
+                    onOpenAccessibilitySettings = {
+                        context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                    },
+                    onTogglePhoneControl = { viewModel.setPhoneControlEnabled(!phoneControlEnabled) }
                 )
             }
 
@@ -79,7 +91,15 @@ fun ReceiverScreen(viewModel: ReceiverViewModel) {
 }
 
 @Composable
-private fun WaitingView(statusMessage: String, deviceIp: String?, port: Int) {
+private fun WaitingView(
+    statusMessage: String,
+    deviceIp: String?,
+    port: Int,
+    phoneControlEnabled: Boolean,
+    phoneControlStatus: String,
+    onOpenAccessibilitySettings: () -> Unit,
+    onTogglePhoneControl: () -> Unit
+) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -120,11 +140,47 @@ private fun WaitingView(statusMessage: String, deviceIp: String?, port: Int) {
         )
 
         Text(
-            text = "This phone is in Receive mode. To cast this phone, tap Send at the top.",
+            text = "This phone is in Receive mode. In Second Display mode it shows the Windows display; in Phone Control mode it keeps its normal Android UI.",
             fontSize = 12.sp,
             color = Color(0xFF64B5F6),
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Text(
+            text = "Phone Control requires the user-enabled BetterCast Accessibility Service. BetterCast does not read window contents.",
+            fontSize = 11.sp,
+            color = Color(0xFFAAAAAA),
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 24.dp)
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Button(
+            onClick = onOpenAccessibilitySettings,
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF333333))
+        ) {
+            Text("Open Accessibility Settings")
+        }
+
+        Button(
+            onClick = onTogglePhoneControl,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (phoneControlEnabled) Color(0xFFB71C1C) else Color(0xFF1565C0)
+            )
+        ) {
+            Text(if (phoneControlEnabled) "Disable Phone Control" else "Arm Phone Control")
+        }
+
+        Text(
+            text = phoneControlStatus,
+            fontSize = 11.sp,
+            color = if (phoneControlEnabled) Color(0xFF81C784) else Color(0xFFAAAAAA),
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 24.dp)
         )
 
         if (deviceIp != null && port > 0) {
