@@ -37,7 +37,7 @@ jobs:
       - name: Install FFmpeg
         shell: pwsh
         run: |
-          vcpkg install "ffmpeg[x264]:x64-windows" --recurse
+          vcpkg install "ffmpeg:x64-windows" --recurse
         env:
           VCPKG_ROOT: C:/vcpkg
 
