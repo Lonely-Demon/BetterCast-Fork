@@ -18,6 +18,8 @@
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QGroupBox>
 #include <QScrollArea>
 #include <QScreen>
@@ -32,6 +34,9 @@
 #include <QUrl>
 #include <QKeyEvent>
 #include <QMouseEvent>
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
 #include <thread>
 
 // ─── Dark theme stylesheet ─────────────────────────────────────────────────────
@@ -321,6 +326,9 @@ MainWindow::MainWindow(QWidget* parent)
             this, &MainWindow::onLogAdded);
 
     setupUi();
+#ifdef Q_OS_WIN
+    RegisterHotKey(reinterpret_cast<HWND>(winId()), 1, MOD_CONTROL | MOD_ALT | MOD_SHIFT, 'B');
+#endif
 
     connect(m_renderer, &VideoRenderer::graphicsInitializationFailed,
             this, [this](const QString& reason) {
@@ -363,10 +371,46 @@ MainWindow::MainWindow(QWidget* parent)
 }
 
 MainWindow::~MainWindow() {
+#ifdef Q_OS_WIN
+    UnregisterHotKey(reinterpret_cast<HWND>(winId()), 1);
+#endif
     m_discovery->stopAdvertising();
     // Clean exit — remove crash marker
     QString crashMarker = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/running.lock";
     QFile::remove(crashMarker);
+}
+
+// ─── Windows session hotkey ─────────────────────────────────────────────────────
+
+bool MainWindow::nativeEvent(const QByteArray& eventType, void* message, qintptr* result) {
+#ifdef Q_OS_WIN
+    if (eventType == "windows_generic_MSG") {
+        auto* msg = static_cast<MSG*>(message);
+        if (msg && msg->message == WM_HOTKEY && msg->wParam == 1) {
+#ifdef ENABLE_SENDER
+            if (m_sender && m_sender->isSending()) {
+                m_displaySuspended = !m_displaySuspended;
+                QJsonObject command;
+                command[QStringLiteral("command")] = m_displaySuspended
+                    ? QStringLiteral("display_suspend")
+                    : QStringLiteral("display_resume");
+                m_sender->sendControlJson(QJsonDocument(command).toJson(QJsonDocument::Compact));
+                if (m_senderStatusLabel) {
+                    m_senderStatusLabel->setText(m_displaySuspended
+                        ? "Second Display suspended — press Ctrl+Alt+Shift+B to resume"
+                        : "Second Display resume requested");
+                }
+                LogManager::instance().log(m_displaySuspended
+                    ? "Second Display suspend requested"
+                    : "Second Display resume requested");
+            }
+#endif
+            if (result) *result = 0;
+            return true;
+        }
+    }
+#endif
+    return QMainWindow::nativeEvent(eventType, message, result);
 }
 
 // ─── UI Setup ───────────────────────────────────────────────────────────────────

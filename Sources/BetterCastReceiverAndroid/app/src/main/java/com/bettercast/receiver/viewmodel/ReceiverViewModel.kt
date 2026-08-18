@@ -10,6 +10,9 @@ import com.bettercast.receiver.network.ConnectionState
 import com.bettercast.receiver.network.ServiceAdvertiser
 import com.bettercast.receiver.network.TcpClient
 import com.bettercast.receiver.network.UdpClient
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import com.bettercast.receiver.video.VideoDecoder
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -32,6 +35,11 @@ class ReceiverViewModel(application: Application) : AndroidViewModel(application
 
     private val _state = MutableStateFlow(ReceiverState.WAITING)
     val state: StateFlow<ReceiverState> = _state.asStateFlow()
+
+    private val _displaySuspended = MutableStateFlow(false)
+    val displaySuspended: StateFlow<Boolean> = _displaySuspended.asStateFlow()
+
+    private val controlJson = Json { ignoreUnknownKeys = false; isLenient = false }
 
     private val _statusMessage = MutableStateFlow("Starting...")
     val statusMessage: StateFlow<String> = _statusMessage.asStateFlow()
@@ -107,9 +115,29 @@ class ReceiverViewModel(application: Application) : AndroidViewModel(application
             videoDecoder.onFrameData(data)
         }
         tcpServer.onControlReceived = { data ->
-            val accepted = BetterCastAccessibilityService.handleControlPayload(data)
-            if (!accepted) {
-                Log.w(TAG, "Rejected control packet: AccessibilityService disabled or session not armed")
+            val command = try {
+                controlJson.parseToJsonElement(data.toString(Charsets.UTF_8))
+                    .jsonObject["command"]?.jsonPrimitive?.content
+            } catch (_: Exception) {
+                null
+            }
+            when (command) {
+                "display_suspend" -> {
+                    _displaySuspended.value = true
+                    _statusMessage.value = "Second Display suspended; session remains connected"
+                    videoDecoder.stop()
+                }
+                "display_resume" -> {
+                    _displaySuspended.value = false
+                    _statusMessage.value = "Second Display resume requested"
+                    sendInputEvent(InputEvent.requestKeyframe())
+                }
+                else -> {
+                    val accepted = BetterCastAccessibilityService.handleControlPayload(data)
+                    if (!accepted) {
+                        Log.w(TAG, "Rejected control packet: AccessibilityService disabled or session not armed")
+                    }
+                }
             }
         }
 
@@ -154,6 +182,7 @@ class ReceiverViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun disconnect() {
+        _displaySuspended.value = false
         BetterCastAccessibilityService.setSessionArmed(false)
         tcpServer.disconnect()
         udpClient?.stop()
@@ -211,6 +240,7 @@ class ReceiverViewModel(application: Application) : AndroidViewModel(application
 
     /** Fully stop the receiver (release port). Used when switching to Sender mode. */
     fun stopReceiver() {
+        _displaySuspended.value = false
         BetterCastAccessibilityService.setSessionArmed(false)
         serviceAdvertiser.stopAdvertising()
         tcpServer.stopListening()

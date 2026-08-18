@@ -125,6 +125,16 @@ fun AppContent(
 
     val receiverState by receiverViewModel.state.collectAsState()
     val senderState by senderViewModel.state.collectAsState()
+    val displaySuspended by receiverViewModel.displaySuspended.collectAsState()
+
+    LaunchedEffect(displaySuspended) {
+        if (displaySuspended && mode == AppMode.RECEIVER) {
+            // Do not disconnect; leave the session/service state intact. Android
+            // may still require the user to tap the persistent notification to
+            // restore the activity from the background.
+            activity.moveTaskToBack(true)
+        }
+    }
 
     // Hide mode toggle when actively connected/casting
     val showModeToggle = when (mode) {

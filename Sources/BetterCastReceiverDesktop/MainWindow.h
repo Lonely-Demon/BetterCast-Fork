@@ -69,6 +69,9 @@ public:
     explicit MainWindow(QWidget* parent = nullptr);
     ~MainWindow();
 
+protected:
+    bool nativeEvent(const QByteArray& eventType, void* message, qintptr* result) override;
+
 private slots:
     void onSidebarSelectionChanged(int row);
     void onConnectClicked();
@@ -118,6 +121,9 @@ private:
     QTimer* m_reconnectTimer = nullptr;
     int m_reconnectAttempts = 0;
     bool m_wirelessAdbEnabled = false;
+#ifdef ENABLE_SENDER
+    bool m_displaySuspended = false;
+#endif
 #ifdef ENABLE_SENDER
     SenderController* m_sender = nullptr;
     PhoneControlController* m_phoneControl = nullptr;

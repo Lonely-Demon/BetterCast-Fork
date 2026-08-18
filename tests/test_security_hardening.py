@@ -64,6 +64,17 @@ class SecurityHardeningRegressionTests(unittest.TestCase):
         self.assertIn("setSessionArmed", service)
         self.assertNotIn("canRetrieveWindowContent=\"true\"", xml)
 
+    def test_display_suspend_resume_is_explicit_and_safe(self):
+        desktop = self.read("Sources/BetterCastReceiverDesktop/MainWindow.cpp")
+        android = self.read("Sources/BetterCastReceiverAndroid/app/src/main/java/com/bettercast/receiver/viewmodel/ReceiverViewModel.kt")
+        self.assertIn("Ctrl+Alt+Shift+B", desktop)
+        self.assertIn("display_suspend", desktop)
+        self.assertIn("display_resume", desktop)
+        self.assertIn("moveTaskToBack", self.read("Sources/BetterCastReceiverAndroid/app/src/main/java/com/bettercast/receiver/MainActivity.kt"))
+        self.assertIn('"display_suspend"', android)
+        self.assertIn('"display_resume"', android)
+        self.assertIn("requestKeyframe", android)
+
     def test_installer_has_no_wildcard_executable_fallback(self):
         installer = self.read("Sources/BetterCastReceiverDesktop/installer.nsi")
         self.assertNotIn("FindFirst", installer)
@@ -74,7 +85,7 @@ class SecurityHardeningRegressionTests(unittest.TestCase):
 
     def test_ci_downloads_are_verified_or_pinned(self):
         all_in_one = self.read(".github/workflows/build-windows-all-in-one.yml")
-        self.assertIn("ffmpeg[openh264,qsv]", all_in_one)
+        self.assertIn("ffmpeg[openh264]", all_in_one)
         self.assertNotIn("ffmpeg[x264]", all_in_one)
         windows = self.read(".github/workflows/build-windows-receiver.yml")
         linux = self.read(".github/workflows/build-linux-receiver.yml")
