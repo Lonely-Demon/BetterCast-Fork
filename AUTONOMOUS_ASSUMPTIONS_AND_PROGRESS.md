@@ -2,6 +2,8 @@
 
 _Last updated: 2026-08-19_
 
+_Final validated code commit: `50fe4d8ebde372099a7059c0c70952938ed34e9f`; documentation-only handoff commits follow it._
+
 ## Final product target
 
 The final target is a Windows–Android ecosystem companion rather than a single casting mode. The intended product combines two explicit modes—Android as a Windows second display and Windows input control of the native Android UI—with a shared Wi-Fi session, safe suspend/resume, bidirectional file transfer, clipboard synchronization, audio routing where the operating systems permit it, discovery and pairing, recovery after sleep/network changes, low-spec performance tuning, and optional Android-to-Windows phone mirroring as a lower-priority capability. Second Display is a milestone, not the final endpoint.
@@ -33,8 +35,8 @@ The final target is a Windows–Android ecosystem companion rather than a single
 | Windows control-only sender API | Added to `SenderController` and `NetworkSender`. |
 | Windows Phone Control pointer milestone | Added: explicit control-only connection and center-anchored mouse movement/tap loop with Escape safety stop. This is not yet a true screen-edge handoff and does not yet provide full keyboard mapping. |
 | Android session cleanup | TCP disconnect, LISTENING/ERROR/IDLE transitions, explicit disconnect, and view-model teardown now disarm the AccessibilityService session and clear suspended-display state where applicable. |
-| Android debug APK | Successful CI artifacts from runs `32181809963` and `32185136237`; the latest hardening commit `ac631d5285e1c02342097c3eeee902a49c8529fd` is being validated by run `32185260188`. |
-| Windows all-in-one sender/receiver | Successful CI artifact from run `32181810245` at commit `0ec94468590ee7b1cfc5d5dece29687f16bbb95d`; a current-commit rebuild is running as `32185288715`. Earlier attempts failed on x264 source hash mismatch; the workflow now uses OpenH264 and Qt 6.7.3. |
+| Android debug APK | Successful CI artifact from run `32189181540` at code commit `50fe4d8ebde372099a7059c0c70952938ed34e9f`; downloaded APK SHA-256 is `cd3a2faca72819341834933bb8ecc397ac6d71898bb4cb56a45b0f2642c08c8c`. |
+| Windows all-in-one sender/receiver | Successful current-code artifact from run `32189202887` at code commit `50fe4d8ebde372099a7059c0c70952938ed34e9f`; artifact ID `9344394467`, 65,785,020 bytes. Earlier attempts failed on x264 source hash mismatch; the workflow now uses OpenH264 and Qt 6.7.3. |
 | Feature research notes | Official WASAPI loopback and Android MediaProjection constraints are recorded in `research_feature_constraints.md`; mirroring remains optional and requires per-session Android consent. |
 
 ## Assumptions made while user was unavailable
@@ -49,7 +51,7 @@ The final target is a Windows–Android ecosystem companion rather than a single
 
 ## Open issues to resolve autonomously
 
-- Complete the Windows all-in-one build and repair any Qt, OpenH264, CMake, linker, or packaging failures.
+- Complete the Windows all-in-one build and repair any Qt, OpenH264, CMake, linker, or packaging failures. The current-code build now completes successfully in run `32189202887`.
 - Run automated Android and repository regression tests after each fix.
 - Audit the new control protocol for malformed JSON, rate abuse, session authorization, and disconnect behavior; rate abuse and disconnect cleanup have now been hardened, while authentication/encryption remain release blockers.
 - Add safe session suspend/resume state handling and the Windows hotkey foundation where it can be implemented without human setup.

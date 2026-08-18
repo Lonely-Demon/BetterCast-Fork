@@ -14,17 +14,17 @@ The implemented milestone combines Windows as the sender with Android as the rec
 
 | Item | Current state |
 |---|---|
-| Latest fork `main` | `50fe4d8ebde372099a7059c0c70952938ed34e9f` |
-| Latest Android code validation | Run [`32189181540`](https://github.com/Lonely-Demon/BetterCast-Fork/actions/runs/32189181540), **success** |
-| Latest Windows code validation | Run [`32189202887`](https://github.com/Lonely-Demon/BetterCast-Fork/actions/runs/32189202887), active at the time of this document’s preparation; it is compiling the FFmpeg dependency before the application build |
-| Last successful Windows all-in-one build | Run [`32185288715`](https://github.com/Lonely-Demon/BetterCast-Fork/actions/runs/32185288715), **success**, commit `ac631d5285e1c02342097c3eeee902a49c8529fd` |
+| Latest fork `main` | `d1c98985c42ca205c6efe40bf86798f9563079a5` |
+| Latest Android code validation | Run [`32189181540`](https://github.com/Lonely-Demon/BetterCast-Fork/actions/runs/32189181540), **success**, code commit `50fe4d8ebde372099a7059c0c70952938ed34e9f` |
+| Latest Windows code validation | Run [`32189202887`](https://github.com/Lonely-Demon/BetterCast-Fork/actions/runs/32189202887), **success**, code commit `50fe4d8ebde372099a7059c0c70952938ed34e9f` |
+| Last successful Windows all-in-one build | Run [`32189202887`](https://github.com/Lonely-Demon/BetterCast-Fork/actions/runs/32189202887), **success** |
 | Previous successful combined build | Run [`32181810245`](https://github.com/Lonely-Demon/BetterCast-Fork/actions/runs/32181810245), **success** |
 | Repository regression tests | **9 passing** |
 | Android APK downloaded locally | `artifacts/android/app-debug.apk`, 9,099,795 bytes |
-| Android APK SHA-256 | `6d812fc12e709de85f6f2f09ac713af71fd11df2b00d6b01625bb735cdc85d1d` |
-| Windows artifact metadata | Current successful package is 65,785,003 bytes; GitHub artifact ID `9343146798`; direct download requires the authenticated GitHub Actions artifact endpoint |
+| Android APK SHA-256 | `cd3a2faca72819341834933bb8ecc397ac6d71898bb4cb56a45b0f2642c08c8c` |
+| Windows artifact metadata | Current successful package is 65,785,020 bytes; GitHub artifact ID `9344394467`; direct download requires the authenticated GitHub Actions artifact endpoint |
 
-The Windows all-in-one workflow uses Qt 6.7.3, the Ninja generator, and FFmpeg with OpenH264 rather than the previously failing x264 vcpkg feature. The successful package includes the combined sender/receiver application and Windows software-OpenGL fallback deployment.
+The Windows all-in-one workflow uses Qt 6.7.3, the Ninja generator, and FFmpeg with OpenH264 rather than the previously failing x264 vcpkg feature. The successful package includes the combined sender/receiver application and Windows software-OpenGL fallback deployment. The current source revision was built successfully by run `32189202887`.
 
 ## Completed security hardening
 
