@@ -21,6 +21,7 @@ public:
 
     void sendVideo(const QByteArray& payload);
     void sendAudio(const QByteArray& payload);
+    void sendControlJson(const QByteArray& json);
 
 signals:
     void connected();

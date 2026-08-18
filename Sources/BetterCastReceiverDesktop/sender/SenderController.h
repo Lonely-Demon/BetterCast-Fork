@@ -21,7 +21,9 @@ public:
     // Start sender mode: capture screen, encode, and stream to receiver
     bool startSending(const QString& receiverHost, uint16_t port = 51820,
                       int fps = 30, int bitrateMbps = 8);
+    bool startControlOnly(const QString& receiverHost, uint16_t port = 51820);
     void stopSending();
+    void sendControlJson(const QByteArray& json);
     bool isSending() const { return m_sending; }
 
     // Monitor selection (adapter + output index from DXGI enumeration)
@@ -53,6 +55,7 @@ private:
     NetworkSender* m_network = nullptr;
     VirtualDisplayVDD* m_vdd = nullptr;
     bool m_sending = false;
+    bool m_controlOnly = false;
     bool m_encoderReady = false;
     int m_fps = 30;
     int m_bitrateMbps = 8;

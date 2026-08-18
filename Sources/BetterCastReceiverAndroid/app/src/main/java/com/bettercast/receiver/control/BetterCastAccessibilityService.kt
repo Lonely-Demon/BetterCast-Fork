@@ -6,7 +6,10 @@ import android.graphics.Path
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.view.Gravity
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
+import android.graphics.PixelFormat
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -39,6 +42,7 @@ class BetterCastAccessibilityService : AccessibilityService() {
 
         fun setSessionArmed(armed: Boolean) {
             sessionArmed = armed
+            activeService?.setOverlayVisible(armed)
         }
 
         fun handleControlPayload(payload: ByteArray): Boolean {
@@ -49,10 +53,14 @@ class BetterCastAccessibilityService : AccessibilityService() {
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
+    private var windowManager: WindowManager? = null
+    private var pointerOverlay: RemotePointerOverlay? = null
+    private var overlayParams: WindowManager.LayoutParams? = null
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         activeService = this
+        createPointerOverlay()
         Log.i(TAG, "Accessibility control service enabled")
     }
 
@@ -66,11 +74,73 @@ class BetterCastAccessibilityService : AccessibilityService() {
     }
 
     override fun onDestroy() {
+        removePointerOverlay()
         if (activeService === this) {
             activeService = null
             sessionArmed = false
         }
         super.onDestroy()
+    }
+
+    private fun createPointerOverlay() {
+        try {
+            val manager = getSystemService(WINDOW_SERVICE) as WindowManager
+            val overlay = RemotePointerOverlay(this)
+            val params = WindowManager.LayoutParams(
+                64,
+                64,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+                PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                x = 0
+                y = 0
+            }
+            manager.addView(overlay, params)
+            overlay.visibility = android.view.View.GONE
+            windowManager = manager
+            pointerOverlay = overlay
+            overlayParams = params
+        } catch (error: Exception) {
+            Log.w(TAG, "Unable to create remote pointer overlay", error)
+        }
+    }
+
+    private fun removePointerOverlay() {
+        val overlay = pointerOverlay ?: return
+        try {
+            windowManager?.removeView(overlay)
+        } catch (error: Exception) {
+            Log.w(TAG, "Unable to remove remote pointer overlay", error)
+        }
+        pointerOverlay = null
+        overlayParams = null
+        windowManager = null
+    }
+
+    private fun setOverlayVisible(visible: Boolean) {
+        mainHandler.post {
+            pointerOverlay?.visibility = if (visible) android.view.View.VISIBLE else android.view.View.GONE
+        }
+    }
+
+    private fun updatePointer(x: Float, y: Float) {
+        val overlay = pointerOverlay ?: return
+        val params = overlayParams ?: return
+        val metrics = resources.displayMetrics
+        params.x = (x * metrics.widthPixels - 32f).toInt().coerceIn(0, (metrics.widthPixels - 64).coerceAtLeast(0))
+        params.y = (y * metrics.heightPixels - 32f).toInt().coerceIn(0, (metrics.heightPixels - 64).coerceAtLeast(0))
+        mainHandler.post {
+            try {
+                windowManager?.updateViewLayout(overlay, params)
+                overlay.visibility = android.view.View.VISIBLE
+                overlay.invalidate()
+            } catch (error: Exception) {
+                Log.w(TAG, "Unable to update remote pointer overlay", error)
+            }
+        }
     }
 
     private fun dispatchPayload(payload: ByteArray): Boolean {
@@ -83,6 +153,12 @@ class BetterCastAccessibilityService : AccessibilityService() {
 
         val command = root["command"]?.jsonPrimitive?.content ?: return false
         return when (command) {
+            "move" -> {
+                val x = normalizedCoordinate(root, "x") ?: return false
+                val y = normalizedCoordinate(root, "y") ?: return false
+                updatePointer(x, y)
+                true
+            }
             "tap" -> {
                 val x = normalizedCoordinate(root, "x") ?: return false
                 val y = normalizedCoordinate(root, "y") ?: return false

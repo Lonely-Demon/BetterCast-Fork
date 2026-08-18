@@ -109,3 +109,9 @@ void NetworkSender::sendVideo(const QByteArray& payload) {
 void NetworkSender::sendAudio(const QByteArray& payload) {
     sendPacket(0x02, payload);
 }
+
+void NetworkSender::sendControlJson(const QByteArray& json) {
+    // Control messages are deliberately kept small and separate from media.
+    if (json.isEmpty() || json.size() > 16 * 1024) return;
+    sendPacket(0x03, json);
+}

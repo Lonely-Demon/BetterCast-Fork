@@ -39,6 +39,7 @@ bool SenderController::startSending(const QString& receiverHost, uint16_t port,
 
     m_fps = fps;
     m_bitrateMbps = bitrateMbps;
+    m_controlOnly = false;
 
     // Create screen capture (targeting selected monitor)
 #ifdef _WIN32
@@ -82,10 +83,39 @@ bool SenderController::startSending(const QString& receiverHost, uint16_t port,
     return true;
 }
 
+bool SenderController::startControlOnly(const QString& receiverHost, uint16_t port) {
+    if (m_sending) {
+        qWarning() << "Sender: Already sending or controlling";
+        return false;
+    }
+
+    m_network = new NetworkSender(this);
+    connect(m_network, &NetworkSender::connected,
+            this, &SenderController::onConnected);
+    connect(m_network, &NetworkSender::disconnected,
+            this, &SenderController::onDisconnected);
+    connect(m_network, &NetworkSender::error,
+            this, &SenderController::error);
+
+    m_controlOnly = true;
+    m_sending = true;
+    m_encoderReady = false;
+    emit statusChanged("Connecting for Phone Control...");
+    m_network->connectTo(receiverHost, port);
+    return true;
+}
+
+void SenderController::sendControlJson(const QByteArray& json) {
+    if (m_network && m_network->isConnected() && !json.isEmpty() && json.size() <= 16 * 1024) {
+        m_network->sendControlJson(json);
+    }
+}
+
 void SenderController::stopSending() {
     if (!m_sending) return;
 
     m_sending = false;
+    m_controlOnly = false;
     m_encoderReady = false;
 
     if (m_capture) {
@@ -109,9 +139,9 @@ void SenderController::stopSending() {
 }
 
 void SenderController::onConnected() {
-    qDebug() << "Sender: Connected to receiver, starting capture...";
+    qDebug() << "Sender: Connected to receiver";
     emit connected();
-    emit statusChanged("Connected — starting screen capture...");
+    emit statusChanged(m_controlOnly ? "Phone Control connected" : "Connected — starting screen capture...");
 
     if (m_capture && !m_capture->isRunning()) {
         if (!m_capture->start()) {

@@ -13,6 +13,7 @@
 #ifdef ENABLE_SENDER
 #include "sender/SenderController.h"
 #include "sender/VirtualDisplayVDD.h"
+#include "sender/PhoneControlController.h"
 #endif
 
 #include <QVBoxLayout>
@@ -234,6 +235,15 @@ MainWindow::MainWindow(QWidget* parent)
 
 #ifdef ENABLE_SENDER
     m_sender = new SenderController(this);
+    m_phoneControl = new PhoneControlController(m_sender, this);
+    connect(m_phoneControl, &PhoneControlController::statusChanged, this, [this](const QString& status) {
+        if (m_senderStatusLabel) m_senderStatusLabel->setText(status);
+        LogManager::instance().log("Phone Control: " + status);
+    });
+    connect(m_phoneControl, &PhoneControlController::error, this, [this](const QString& msg) {
+        if (m_senderStatusLabel) m_senderStatusLabel->setText("Phone Control error: " + msg);
+        LogManager::instance().log("Phone Control error: " + msg);
+    });
     connect(m_sender, &SenderController::statusChanged, this, [this](const QString& status) {
         if (m_senderStatusLabel) m_senderStatusLabel->setText(status);
         LogManager::instance().log("Sender: " + status);
@@ -247,8 +257,11 @@ MainWindow::MainWindow(QWidget* parent)
         LogManager::instance().log("Sender: Connected and streaming");
     });
     connect(m_sender, &SenderController::stopped, this, [this]() {
+        if (m_phoneControl) m_phoneControl->stop();
         if (m_sendBtn) m_sendBtn->setEnabled(true);
         if (m_stopSendBtn) m_stopSendBtn->setEnabled(false);
+        if (m_controlConnectBtn) m_controlConnectBtn->setEnabled(true);
+        if (m_phoneControlBtn) m_phoneControlBtn->setEnabled(false);
         if (m_sendHostEdit) m_sendHostEdit->setEnabled(true);
     });
 
@@ -710,6 +723,54 @@ void MainWindow::setupSendPage() {
     connLayout->addLayout(hostRow);
 
     layout->addWidget(connCard);
+
+    // ─── Phone Control card ─────────────────────────────────────────────
+    auto* controlCard = makeCard("Phone Control Mode (Wi-Fi)");
+    auto* controlLayout = new QVBoxLayout(controlCard);
+    controlLayout->setSpacing(10);
+
+    auto* controlInfo = new QLabel(
+        "Keep the Android phone on its normal Android UI and control it from Windows. "
+        "On Android, enable the BetterCast Accessibility Service first. "
+        "This mode does not mirror the phone screen into Windows.");
+    controlInfo->setStyleSheet("font-size: 12px; color: #aaa;");
+    controlInfo->setWordWrap(true);
+    controlLayout->addWidget(controlInfo);
+
+    auto* controlSafety = new QLabel(
+        "Safety: press Escape to stop pointer control. The first milestone supports bounded mouse movement and taps; full keyboard mapping is separate.");
+    controlSafety->setStyleSheet("font-size: 11px; color: #ffb74d;");
+    controlSafety->setWordWrap(true);
+    controlLayout->addWidget(controlSafety);
+
+    auto* controlBtnRow = new QHBoxLayout();
+    m_controlConnectBtn = new QPushButton("Connect for Phone Control");
+    connect(m_controlConnectBtn, &QPushButton::clicked, this, [this]() {
+        if (!m_sender || !m_sendHostEdit) return;
+        const QString host = m_sendHostEdit->text().trimmed();
+        if (host.isEmpty()) {
+            if (m_senderStatusLabel) m_senderStatusLabel->setText("Enter the Android IP address first");
+            return;
+        }
+        if (m_sender->startControlOnly(host, m_selectedReceiverPort)) {
+            m_controlConnectBtn->setEnabled(false);
+            if (m_sendBtn) m_sendBtn->setEnabled(false);
+            if (m_phoneControlBtn) m_phoneControlBtn->setEnabled(true);
+        }
+    });
+    controlBtnRow->addWidget(m_controlConnectBtn);
+
+    m_phoneControlBtn = new QPushButton("Activate Mouse Control");
+    m_phoneControlBtn->setEnabled(false);
+    connect(m_phoneControlBtn, &QPushButton::clicked, this, [this]() {
+        if (m_phoneControl && m_phoneControl->start()) {
+            m_phoneControlBtn->setText("Stop Mouse Control (Escape)");
+        }
+    });
+    controlBtnRow->addWidget(m_phoneControlBtn);
+    controlBtnRow->addStretch();
+    controlLayout->addLayout(controlBtnRow);
+    layout->addWidget(controlCard);
 
     // ─── Quality card ──────────────────────────────────────────────────
     auto* qualCard = makeCard("Stream Quality");

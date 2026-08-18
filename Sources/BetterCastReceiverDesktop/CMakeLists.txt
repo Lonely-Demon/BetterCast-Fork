@@ -140,9 +140,13 @@ if(ENABLE_SENDER)
             sender/ScreenCaptureWin.cpp
             sender/VirtualDisplayVDD.cpp
         )
+        list(APPEND SOURCES
+            sender/PhoneControlController.cpp
+        )
         list(APPEND HEADERS
             sender/ScreenCaptureWin.h
             sender/VirtualDisplayVDD.h
+            sender/PhoneControlController.h
         )
     endif()
     # TODO: Linux PipeWire capture

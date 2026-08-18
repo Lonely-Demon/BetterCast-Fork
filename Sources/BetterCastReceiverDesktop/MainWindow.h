@@ -59,6 +59,7 @@ class VideoWindow;
 #ifdef ENABLE_SENDER
 class SenderController;
 class VirtualDisplayVDD;
+class PhoneControlController;
 #endif
 
 class MainWindow : public QMainWindow {
@@ -119,6 +120,7 @@ private:
     bool m_wirelessAdbEnabled = false;
 #ifdef ENABLE_SENDER
     SenderController* m_sender = nullptr;
+    PhoneControlController* m_phoneControl = nullptr;
 #endif
 
     // Layout
@@ -164,6 +166,8 @@ private:
     QSpinBox* m_bitrateSpinBox = nullptr;
     QPushButton* m_sendBtn = nullptr;
     QPushButton* m_stopSendBtn = nullptr;
+    QPushButton* m_controlConnectBtn = nullptr;
+    QPushButton* m_phoneControlBtn = nullptr;
     QLabel* m_senderStatusLabel = nullptr;
 
     // Virtual Display (VDD) controls

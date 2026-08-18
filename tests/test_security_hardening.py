@@ -58,6 +58,8 @@ class SecurityHardeningRegressionTests(unittest.TestCase):
         self.assertIn("canPerformGestures", xml)
         self.assertIn("MAX_CONTROL_BYTES", service)
         self.assertIn("dispatchGlobalAction", service)
+        self.assertIn('"move"', service)
+        self.assertIn("RemotePointerOverlay", service)
         self.assertIn("typeByte == 0x03", tcp)
         self.assertIn("setSessionArmed", service)
         self.assertNotIn("canRetrieveWindowContent=\"true\"", xml)
