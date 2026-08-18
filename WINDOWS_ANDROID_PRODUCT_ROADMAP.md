@@ -55,6 +55,16 @@ Windows-to-Android audio should use WASAPI loopback capture with a bounded jitte
 
 Phone Mirror is the lower-priority Android-to-Windows direction. Android MediaProjection requires explicit user consent and a foreground service. It should reuse the authenticated video transport but not be conflated with Phone Control. The product should let the user choose “view phone” without implying that the Windows pointer controls the Android OS unless Phone Control is separately armed.
 
+## Protocol sequencing for the next implementation phase
+
+The existing type-byte framing should remain backward-compatible for video (`0x01`), audio (`0x02`), and control (`0x03`), but new capability planes must not be added as unauthenticated payloads. After pairing, each session should negotiate a protocol version and capability bitset. The proposed future types are `0x04` for file-transfer control/data and `0x05` for clipboard updates; both must be rejected until the peer has an authenticated session and an explicit capability grant.
+
+File-transfer metadata should include a transfer identifier, direction, basename only, declared size, SHA-256 digest, chunk size, and resumable offset. Payloads must be written to a temporary file beneath a user-selected sandbox, verified before atomic rename, and never auto-opened or executed. Clipboard messages should initially carry UTF-8 text only, with a content hash, source peer/session identifier, monotonic update identifier, and loop-prevention token. The receiver should require opt-in and reject oversized or stale updates.
+
+Audio must remain an independent media stream with its own queue and mute state. Windows capture should use shared-mode WASAPI loopback, while Android playback should use a foreground media service and bounded `AudioTrack` buffers. Optional mirroring should use a separately consented Android MediaProjection session; it must not be silently started by a Windows control command.
+
+These designs are intentionally documented before implementation because the current plaintext transport is a release blocker. Implementing files or clipboard before authenticated pairing would turn a local-network injection flaw into a file-write or data-exfiltration capability.
+
 ## Security gates
 
 | Gate | Required before release |
