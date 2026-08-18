@@ -64,6 +64,13 @@ class SecurityHardeningRegressionTests(unittest.TestCase):
         self.assertIn("setSessionArmed", service)
         self.assertNotIn("canRetrieveWindowContent=\"true\"", xml)
 
+    def test_android_control_rate_limit_is_present(self):
+        tcp = self.read("Sources/BetterCastReceiverAndroid/app/src/main/java/com/bettercast/receiver/network/TcpClient.kt")
+        self.assertIn("SystemClock.elapsedRealtime()", tcp)
+        self.assertIn("controlWindowStartMs", tcp)
+        self.assertIn("controlCountInWindow > 240", tcp)
+        self.assertIn("Dropping excessive control packet rate", tcp)
+
     def test_display_suspend_resume_is_explicit_and_safe(self):
         desktop = self.read("Sources/BetterCastReceiverDesktop/MainWindow.cpp")
         android = self.read("Sources/BetterCastReceiverAndroid/app/src/main/java/com/bettercast/receiver/viewmodel/ReceiverViewModel.kt")
