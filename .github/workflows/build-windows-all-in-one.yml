@@ -9,7 +9,7 @@ on:
       - 'CMakeLists.txt'
 
 env:
-  QT_VERSION: '6.7.0'
+  QT_VERSION: '6.7.3'
 
 jobs:
   build-windows-all-in-one:
@@ -28,11 +28,24 @@ jobs:
         shell: pwsh
         run: |
           python -m pip install --disable-pip-version-check aqtinstall
-          python -m aqt install-qt windows desktop $env:QT_VERSION win64_msvc2019_64 `
-            --modules qtmultimedia `
-            --outputdir C:/Qt
-          "Qt6_DIR=C:/Qt/$env:QT_VERSION/msvc2019_64" >> $env:GITHUB_ENV
-          "C:/Qt/$env:QT_VERSION/msvc2019_64/bin" >> $env:GITHUB_PATH
+          Remove-Item -Recurse -Force C:/Qt -ErrorAction SilentlyContinue
+          $qtPrefix = "C:/Qt/$env:QT_VERSION/msvc2019_64"
+          $installed = $false
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            Write-Host "Qt installation attempt $attempt"
+            & python -m aqt install-qt windows desktop $env:QT_VERSION win64_msvc2019_64 `
+              --modules qtmultimedia `
+              --outputdir C:/Qt
+            if ($LASTEXITCODE -eq 0 -and (Test-Path "$qtPrefix/lib/cmake/Qt6/Qt6Config.cmake")) {
+              $installed = $true
+              break
+            }
+            Remove-Item -Recurse -Force C:/Qt -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 5
+          }
+          if (-not $installed) { throw "Qt $env:QT_VERSION installation failed or Qt6Config.cmake is missing" }
+          "Qt6_DIR=$qtPrefix" >> $env:GITHUB_ENV
+          "$qtPrefix/bin" >> $env:GITHUB_PATH
 
       - name: Install FFmpeg with H.264 encoder support
         shell: pwsh
