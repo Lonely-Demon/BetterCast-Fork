@@ -1,5 +1,6 @@
 package com.bettercast.receiver.network
 
+import android.os.SystemClock
 import android.util.Log
 import com.bettercast.receiver.input.InputEvent
 import kotlinx.coroutines.*
@@ -162,6 +163,8 @@ class TcpClient {
             Log.i(TAG, "Read loop started, onFrameReceived=${onFrameReceived != null}")
             var frameCount = 0L
             var audioCount = 0L
+            var controlWindowStartMs = SystemClock.elapsedRealtime()
+            var controlCountInWindow = 0
             try {
                 while (isActive) {
                     val length = input.readInt()
@@ -199,8 +202,16 @@ class TcpClient {
                             continue
                         } else if (typeByte == 0x03 && buffer.size > 1) {
                             // Control packet — bounded JSON payload, strip type byte.
+                            val now = SystemClock.elapsedRealtime()
+                            if (now - controlWindowStartMs >= 1_000L) {
+                                controlWindowStartMs = now
+                                controlCountInWindow = 0
+                            }
+                            controlCountInWindow++
                             val controlData = buffer.copyOfRange(1, buffer.size)
-                            if (controlData.size <= 16 * 1024) {
+                            if (controlCountInWindow > 240) {
+                                Log.w(TAG, "Dropping excessive control packet rate")
+                            } else if (controlData.size <= 16 * 1024) {
                                 onControlReceived?.invoke(controlData)
                             } else {
                                 Log.w(TAG, "Dropping oversized control packet: ${controlData.size} bytes")
