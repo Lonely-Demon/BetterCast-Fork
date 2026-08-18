@@ -15,3 +15,11 @@ Implication for BetterCast: optional phone mirroring must remain a separately ar
 ## Remaining design priorities
 
 File transfer and clipboard sync can be implemented without privileged Android APIs, but still require authenticated session pairing, bounded message sizes, resumable state, atomic writes, SHA-256 verification, and loop prevention. True second-display behavior requires a virtual-display implementation and a coordinate mapping contract; the existing Windows desktop capture is not sufficient by itself to make Android touch input address Windows screen coordinates.
+
+## Clipboard and file-transfer constraints
+
+Microsoft documents event-driven Windows clipboard monitoring through `AddClipboardFormatListener`, with changes delivered to the listener window; this is preferable to polling. Source: https://learn.microsoft.com/en-us/windows/win32/dataxchg/using-the-clipboard
+
+Android’s app-specific storage guidance states that internal app-specific files require no storage permission and are inaccessible to other apps, while files that users expect to retain independently of the app should use shared storage/media collections. App-specific files are removed on uninstall. Source: https://developer.android.com/training/data-storage/app-specific
+
+Implication for BetterCast: a first safe file-transfer implementation should stage incoming data in the Android app’s private files/cache directory, verify and atomically finalize it, then use an explicit user-mediated export/share flow for durable shared storage. Windows clipboard monitoring should be event-driven and text-only initially; synchronized updates need a source token and hash to prevent feedback loops.
