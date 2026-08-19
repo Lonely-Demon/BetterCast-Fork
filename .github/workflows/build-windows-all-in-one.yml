@@ -63,7 +63,7 @@ jobs:
           function Assert-Sha256([string]$Path, [string]$Expected) {
             $actual = (Get-FileHash -Algorithm SHA256 $Path).Hash.ToLowerInvariant()
             if ($actual -ne $Expected.ToLowerInvariant()) {
-              throw "SHA-256 mismatch for $Path: expected $Expected, got $actual"
+              throw "SHA-256 mismatch for ${Path}: expected $Expected, got $actual"
             }
           }
           $baseUrl = "https://github.com/VirtualDrivers/Virtual-Display-Driver/releases/download/$env:VDD_VERSION"
