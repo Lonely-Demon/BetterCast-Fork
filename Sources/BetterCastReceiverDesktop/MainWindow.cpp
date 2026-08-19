@@ -268,6 +268,18 @@ MainWindow::MainWindow(QWidget* parent)
         }
         LogManager::instance().log(QString("Secure pairing required; authentication code %1").arg(code));
     });
+    connect(m_network, &NetworkListener::pairingRequired, this,
+            [this](const QString& code, const QString& fingerprint) {
+        if (m_senderStatusLabel) {
+            m_senderStatusLabel->setText(QString("Secure pairing: compare %1 on Android, then approve here (peer %2…)")
+                                         .arg(code, fingerprint.left(16)));
+        }
+        if (m_pairingApproveBtn) {
+            m_pairingApproveBtn->setText(QString("Approve Secure Pairing (%1)").arg(code));
+            m_pairingApproveBtn->setEnabled(true);
+        }
+        LogManager::instance().log(QString("Secure receiver pairing required; authentication code %1").arg(code));
+    });
     connect(m_sender, &SenderController::connected, this, [this]() {
         if (m_senderStatusLabel) m_senderStatusLabel->setText("Secure session established — sending screen...");
         if (m_pairingApproveBtn) m_pairingApproveBtn->setEnabled(false);
@@ -823,8 +835,11 @@ void MainWindow::setupSendPage() {
     m_pairingApproveBtn = new QPushButton("Approve Secure Pairing");
     m_pairingApproveBtn->setEnabled(false);
     connect(m_pairingApproveBtn, &QPushButton::clicked, this, [this]() {
-        if (m_sender && m_sender->approvePairing()) {
+        bool approved = m_sender && m_sender->approvePairing();
+        if (!approved && m_network) approved = m_network->approvePairing();
+        if (approved) {
             m_pairingApproveBtn->setEnabled(false);
+            m_pairingApproveBtn->setText("Secure Pairing Approved");
             if (m_senderStatusLabel) m_senderStatusLabel->setText("Secure pairing approved");
         }
     });

@@ -3,10 +3,26 @@
 #include "VideoDecoder.h"
 #include "VideoRenderer.h"
 #include "AudioDecoder.h"
+#include "secure/SecureSession.h"
 
 #include <QHostAddress>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QSaveFile>
+#include <QStandardPaths>
 #include <QtEndian>
 #include <QDebug>
+
+namespace {
+constexpr uint8_t kAuthenticationType = 0x03;
+constexpr uint8_t kConfirmationType = 0x04;
+constexpr uint8_t kVideoType = 0x01;
+constexpr uint8_t kAudioType = 0x02;
+constexpr uint8_t kControlType = 0x03;
+constexpr int kMaxHandshakeBytes = SecureSession::kMaxHandshakeMessage;
+constexpr int kMaxFrameBytes = SecureSession::kMaxRecordPlaintext + 1024;
+}
 
 NetworkListener::NetworkListener(QObject* parent)
     : QObject(parent)
@@ -19,6 +35,8 @@ NetworkListener::~NetworkListener() {
     for (auto* client : m_clients) {
         client->disconnectFromHost();
     }
+    qDeleteAll(m_secureSessions);
+    m_secureSessions.clear();
 }
 
 void NetworkListener::setup(VideoDecoder* decoder, VideoRenderer* renderer, AudioDecoder* audioDecoder) {
@@ -31,6 +49,69 @@ uint16_t NetworkListener::actualTcpPort() const {
     if (m_tcpServer && m_tcpServer->isListening())
         return m_tcpServer->serverPort();
     return kDefaultTcpPort;
+}
+
+QString NetworkListener::identityPath() const {
+    const QString base = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    return QDir(base).filePath("identity.key");
+}
+
+QString NetworkListener::peerPath() const {
+    const QString base = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    return QDir(base).filePath("peer.identity");
+}
+
+void NetworkListener::loadPeerTrust(SecureSession* session) {
+    if (!session) return;
+    QFile file(peerPath());
+    if (file.open(QIODevice::ReadOnly) && file.size() == 65) {
+        session->setPinnedPeerPublicKey(file.readAll());
+    }
+}
+
+void NetworkListener::persistPeerTrust(SecureSession* session) {
+    if (!session || session->peerIdentityPublicKey().size() != 65) return;
+    const QString path = peerPath();
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    QSaveFile file(path);
+    if (file.open(QIODevice::WriteOnly)) {
+        file.write(session->peerIdentityPublicKey());
+        file.commit();
+    }
+}
+
+bool NetworkListener::sendFramed(QTcpSocket* socket, const QByteArray& message) {
+    if (!socket || socket->state() != QAbstractSocket::ConnectedState ||
+        message.isEmpty() || message.size() > kMaxFrameBytes || socket->bytesToWrite() > kMaxBufferSize) {
+        return false;
+    }
+    const uint32_t lengthBe = qToBigEndian(static_cast<uint32_t>(message.size()));
+    socket->write(reinterpret_cast<const char*>(&lengthBe), 4);
+    socket->write(message);
+    return true;
+}
+
+bool NetworkListener::initializeSecureSession(QTcpSocket* socket, bool initiator) {
+    if (!socket) return false;
+    auto* session = new SecureSession(initiator ? SecureSession::Role::Initiator
+                                                : SecureSession::Role::Responder);
+    QString error;
+    if (!session->loadOrCreateIdentity(identityPath(), &error)) {
+        LogManager::instance().log(QString("Secure identity initialization failed: %1").arg(error));
+        delete session;
+        return false;
+    }
+    loadPeerTrust(session);
+    m_secureSessions.insert(socket, session);
+    if (initiator) {
+        const QByteArray hello = session->makeHello(&error);
+        if (hello.isEmpty() || !sendFramed(socket, hello)) {
+            LogManager::instance().log(QString("Secure handshake start failed: %1").arg(error));
+            delete m_secureSessions.take(socket);
+            return false;
+        }
+    }
+    return true;
 }
 
 void NetworkListener::start() {
@@ -74,6 +155,8 @@ void NetworkListener::disconnectAll() {
     m_tcpBuffers.clear();
     m_connectionFormat.clear();
     m_secureSessionEstablished.clear();
+    qDeleteAll(m_secureSessions);
+    m_secureSessions.clear();
     {
         QMutexLocker lock(&m_udpMutex);
         m_udpBuffer.clear();
@@ -103,7 +186,11 @@ void NetworkListener::connectTo(const QString& host, uint16_t port) {
         m_tcpBuffers[socket] = QByteArray();
         m_connectionFormat[socket] = -1; // secure v2 handshake required
         m_secureSessionEstablished[socket] = false;
-        emit statusChanged("TCP connected; secure authentication required");
+        if (!initializeSecureSession(socket, true)) {
+            socket->abort();
+            return;
+        }
+        emit statusChanged("TCP connected; secure handshake started");
     });
 
     connect(socket, &QTcpSocket::readyRead, this, &NetworkListener::onTcpReadyRead);
@@ -130,6 +217,15 @@ void NetworkListener::onNewTcpConnection() {
         m_tcpBuffers[socket] = QByteArray();
         m_connectionFormat[socket] = -1; // secure v2 handshake required
         m_secureSessionEstablished[socket] = false;
+        if (!initializeSecureSession(socket, false)) {
+            socket->abort();
+            socket->deleteLater();
+            m_clients.removeAll(socket);
+            m_tcpBuffers.remove(socket);
+            m_connectionFormat.remove(socket);
+            m_secureSessionEstablished.remove(socket);
+            continue;
+        }
         if (!m_udpPeerSet) {
             m_udpPeerAddress = socket->peerAddress();
             m_udpPeerSet = true;
@@ -200,47 +296,19 @@ void NetworkListener::processTcpBuffer(QTcpSocket* socket) {
             return;
         }
 
-        // The legacy auto-detection path is intentionally disabled. A raw
-        // TCP peer must complete the secure v2 handshake before any body can
-        // reach a decoder or control path.
         if (!m_secureSessionEstablished.value(socket, false)) {
-            qWarning() << "Rejecting unauthenticated TCP frame from" << socket->peerAddress().toString();
-            buffer.clear();
-            socket->disconnectFromHost();
-            return;
-        }
-
-        // Secure sessions do not use legacy auto-detection.
-        // Type-byte format (Mac sender): [0x01=video|0x02=audio][payload]
-        // Legacy format (Android/Swift): [8-byte PTS][NALUs] — first frame PTS=0 so byte[0]=0x00
-        int& format = m_connectionFormat[socket];
-        if (format < 0 && body.size() > 1) {
-            uint8_t firstByte = static_cast<uint8_t>(body[0]);
-            if (firstByte == 0x01 || firstByte == 0x02) {
-                format = 1; // type-byte framing
-                LogManager::instance().log("Detected type-byte framing (desktop sender)");
-            } else {
-                format = 0; // legacy framing
-                LogManager::instance().log("Detected legacy framing (Android/Swift sender)");
-            }
-        }
-
-        if (format == 1 && body.size() > 1) {
-            uint8_t typeByte = static_cast<uint8_t>(body[0]);
-            if (typeByte == 0x01) {
-                handleVideoData(body.mid(1), false);  // type-byte framing: no PTS prefix
-            } else if (typeByte == 0x02) {
-                handleAudioData(body.mid(1));
-            } else {
-                qWarning() << "TCP framing error: unknown type — disconnecting";
+            if (!processSecureHandshake(socket, body)) {
+                qWarning() << "Secure handshake failed for" << socket->peerAddress().toString();
+                buffer.clear();
                 socket->disconnectFromHost();
                 return;
             }
-        } else if (body.size() >= 8) {
-            // Legacy: has 8-byte PTS prefix
-            handleVideoData(body, true);
-        } else {
-            qWarning() << "TCP framing error: legacy body too short — disconnecting";
+            continue;
+        }
+
+        if (!processSecureRecord(socket, body)) {
+            qWarning() << "Secure record rejected from" << socket->peerAddress().toString();
+            buffer.clear();
             socket->disconnectFromHost();
             return;
         }
@@ -250,6 +318,109 @@ void NetworkListener::processTcpBuffer(QTcpSocket* socket) {
     if (consumed > 0) {
         buffer.remove(0, consumed);
     }
+}
+
+bool NetworkListener::processSecureHandshake(QTcpSocket* socket, const QByteArray& message) {
+    auto* session = m_secureSessions.value(socket, nullptr);
+    if (!session || message.isEmpty() || message.size() > kMaxHandshakeBytes) return false;
+
+    QString error;
+    QByteArray response;
+    bool ok = false;
+    const bool isHello = message.size() >= 2 && message[0] == 'B' && message[1] == 'C';
+    if (isHello) {
+        if (session->state() == SecureSession::State::New) {
+            ok = session->receiveHello(message, &response, &error);
+        } else {
+            ok = session->receiveHelloReply(message, &response, &error);
+        }
+    } else if (static_cast<uint8_t>(message[0]) == kAuthenticationType) {
+        ok = session->receiveAuthentication(message, &response, &error);
+        if (ok && session->role() == SecureSession::Role::Initiator &&
+            session->state() == SecureSession::State::HandshakeConfirmed) {
+            response = session->makeConfirmationMessage(true, &error);
+            ok = !response.isEmpty();
+        }
+    } else if (static_cast<uint8_t>(message[0]) == kConfirmationType) {
+        ok = session->receiveConfirmation(message, &response, &error);
+    } else {
+        error = "Unexpected secure handshake message";
+    }
+    if (!ok) {
+        LogManager::instance().log(QString("Secure handshake failed: %1").arg(error));
+        return false;
+    }
+    if (!response.isEmpty() && !sendFramed(socket, response)) return false;
+
+    if (session->needsPeerApproval()) {
+        if (session->hasPinnedPeer()) {
+            if (!session->approvePeer(&error)) return false;
+            persistPeerTrust(session);
+            activateSecureSession(socket);
+        } else {
+            emit pairingRequired(session->shortAuthenticationString(),
+                                 QString::fromLatin1(session->peerFingerprint()));
+            emit statusChanged(QString("Secure pairing required; compare %1 and approve")
+                               .arg(session->shortAuthenticationString()));
+            LogManager::instance().log(QString("Secure pairing required; authentication code %1")
+                                       .arg(session->shortAuthenticationString()));
+        }
+    }
+    return true;
+}
+
+bool NetworkListener::processSecureRecord(QTcpSocket* socket, const QByteArray& record) {
+    auto* session = m_secureSessions.value(socket, nullptr);
+    if (!session || !session->isEstablished() || record.isEmpty() || record.size() > kMaxFrameBytes) {
+        return false;
+    }
+    uint8_t type = 0;
+    QByteArray payload;
+    QString error;
+    if (!session->decryptRecord(record, &type, &payload, &error)) {
+        LogManager::instance().log(QString("Secure record authentication failed: %1").arg(error));
+        return false;
+    }
+    if (type == kVideoType) {
+        handleVideoData(payload, false);
+        return true;
+    }
+    if (type == kAudioType) {
+        handleAudioData(payload);
+        return true;
+    }
+    if (type == kControlType && payload.size() <= 16 * 1024) {
+        // Authenticated control records are currently reserved for future
+        // reverse-control features; do not execute arbitrary commands.
+        return true;
+    }
+    return false;
+}
+
+void NetworkListener::activateSecureSession(QTcpSocket* socket) {
+    if (!socket || !m_secureSessions.contains(socket)) return;
+    if (m_secureSessionEstablished.value(socket, false)) return;
+    m_secureSessionEstablished[socket] = true;
+    m_connectionFormat[socket] = 1;
+    LogManager::instance().log("Secure session established");
+    emit connectionEstablished();
+    emit statusChanged("Secure session established");
+}
+
+bool NetworkListener::approvePairing() {
+    for (auto* socket : m_clients) {
+        auto* session = m_secureSessions.value(socket, nullptr);
+        if (!session || !session->needsPeerApproval()) continue;
+        QString error;
+        if (!session->approvePeer(&error)) {
+            LogManager::instance().log(QString("Secure pairing approval failed: %1").arg(error));
+            return false;
+        }
+        persistPeerTrust(session);
+        activateSecureSession(socket);
+        return true;
+    }
+    return false;
 }
 
 void NetworkListener::handleVideoData(const QByteArray& data, bool hasPtsPrefix) {
@@ -290,6 +461,7 @@ void NetworkListener::onTcpDisconnected() {
     m_tcpBuffers.remove(socket);
     m_connectionFormat.remove(socket);
     m_secureSessionEstablished.remove(socket);
+    delete m_secureSessions.take(socket);
     if (m_clients.isEmpty()) {
         QMutexLocker lock(&m_udpMutex);
         m_udpBuffer.clear();
@@ -460,32 +632,32 @@ void NetworkListener::handleUdpPacket(const QByteArray& data, const QHostAddress
 }
 
 void NetworkListener::onHeartbeatTick() {
-    InputEvent heartbeat(InputEventType::Command, 0, 0, kHeartbeatKeyCode);
-    QByteArray packet = heartbeat.toPacket();
-
-    for (auto* client : m_clients) {
-        client->write(packet);
-    }
+    sendInputEvent(InputEvent(InputEventType::Command, 0, 0, kHeartbeatKeyCode));
 }
 
 void NetworkListener::sendInputEvent(const InputEvent& event) {
-    // No plaintext reverse-control path is permitted. Secure v2 receiver
-    // support must set this gate only after authenticated session setup.
-    if (m_clients.isEmpty() || !m_secureSessionEstablished.value(m_clients.first(), false)) return;
-    bool isCritical = (event.type == InputEventType::LeftMouseDown ||
-                       event.type == InputEventType::LeftMouseUp ||
-                       event.type == InputEventType::RightMouseDown ||
-                       event.type == InputEventType::RightMouseUp ||
-                       event.type == InputEventType::KeyDown ||
-                       event.type == InputEventType::KeyUp ||
-                       event.type == InputEventType::Command);
+    const QByteArray payload = event.toJson();
+    if (payload.isEmpty() || payload.size() > 16 * 1024) return;
 
-    int repeatCount = isCritical ? 3 : 1;
-    QByteArray packet = event.toPacket();
+    const bool isCritical = (event.type == InputEventType::LeftMouseDown ||
+                             event.type == InputEventType::LeftMouseUp ||
+                             event.type == InputEventType::RightMouseDown ||
+                             event.type == InputEventType::RightMouseUp ||
+                             event.type == InputEventType::KeyDown ||
+                             event.type == InputEventType::KeyUp ||
+                             event.type == InputEventType::Command);
+    const int repeatCount = isCritical ? 3 : 1;
 
     for (auto* client : m_clients) {
+        auto* session = m_secureSessions.value(client, nullptr);
+        if (!session || !m_secureSessionEstablished.value(client, false)) continue;
         for (int i = 0; i < repeatCount; i++) {
-            client->write(packet);
+            QString error;
+            const QByteArray record = session->encryptRecord(kControlType, payload, &error);
+            if (record.isEmpty() || !sendFramed(client, record)) {
+                LogManager::instance().log(QString("Secure control send failed: %1").arg(error));
+                break;
+            }
         }
     }
 }

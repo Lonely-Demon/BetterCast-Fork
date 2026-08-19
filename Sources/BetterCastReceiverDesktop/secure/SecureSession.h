@@ -41,6 +41,7 @@ public:
     QByteArray makeConfirmationMessage(bool initiatorConfirmation, QString* error = nullptr);
 
     State state() const { return m_state; }
+    Role role() const { return m_role; }
     bool isHandshakeConfirmed() const { return m_state == State::HandshakeConfirmed || isEstablished(); }
     bool isEstablished() const { return m_state == State::Established; }
     bool needsPeerApproval() const { return m_state == State::AwaitingApproval; }

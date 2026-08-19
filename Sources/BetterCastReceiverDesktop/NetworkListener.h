@@ -16,6 +16,7 @@
 class VideoDecoder;
 class VideoRenderer;
 class AudioDecoder;
+class SecureSession;
 
 class NetworkListener : public QObject {
     Q_OBJECT
@@ -28,12 +29,14 @@ public:
     void start();
     void connectTo(const QString& host, uint16_t port);
     void disconnectAll();
+    bool approvePairing();
     const QList<QTcpSocket*>& clients() const { return m_clients; }
     uint16_t actualTcpPort() const;
 
 signals:
     void connectionEstablished();
     void connectionLost();
+    void pairingRequired(const QString& authenticationString, const QString& fingerprint);
     void statusChanged(const QString& status);
 
 public slots:
@@ -48,6 +51,15 @@ private slots:
 
 private:
     void processTcpBuffer(QTcpSocket* socket);
+    bool initializeSecureSession(QTcpSocket* socket, bool initiator);
+    bool processSecureHandshake(QTcpSocket* socket, const QByteArray& message);
+    bool processSecureRecord(QTcpSocket* socket, const QByteArray& record);
+    bool sendFramed(QTcpSocket* socket, const QByteArray& message);
+    QString identityPath() const;
+    QString peerPath() const;
+    void loadPeerTrust(SecureSession* session);
+    void persistPeerTrust(SecureSession* session);
+    void activateSecureSession(QTcpSocket* socket);
     void handleVideoData(const QByteArray& data, bool hasPtsPrefix = true);
     void handleAudioData(const QByteArray& data);
     void handleUdpPacket(const QByteArray& data, const QHostAddress& senderAddress, uint16_t senderPort);
@@ -61,6 +73,7 @@ private:
     // -1 = not yet detected
     QHash<QTcpSocket*, int> m_connectionFormat;
     QHash<QTcpSocket*, bool> m_secureSessionEstablished;
+    QHash<QTcpSocket*, SecureSession*> m_secureSessions;
 
     // UDP
     QUdpSocket* m_udpSocket = nullptr;

@@ -840,8 +840,25 @@ bool SecureSession::decryptRecord(const QByteArray& record, uint8_t* type,
 
 #else
 
+namespace {
+const QString kWindowsOnlySecureSession = "SecureSession is Windows-only in this milestone";
+}
+
 SecureSession::SecureSession(Role role) : m_role(role) { m_state = State::Failed; }
 SecureSession::~SecureSession() = default;
-bool SecureSession::loadOrCreateIdentity(const QString&, QString* error) { return fail(error, "SecureSession is Windows-only in this milestone"); }
-QByteArray SecureSession::makeHello(QString* error) { fail(error, "SecureSession is Windows-only in this milestone"); return {}; }
+bool SecureSession::loadOrCreateIdentity(const QString&, QString* error) { return fail(error, kWindowsOnlySecureSession); }
+QByteArray SecureSession::makeHello(QString* error) { fail(error, kWindowsOnlySecureSession); return {}; }
+bool SecureSession::receiveHello(const QByteArray&, QByteArray*, QString* error) { return fail(error, kWindowsOnlySecureSession); }
+bool SecureSession::receiveHelloReply(const QByteArray&, QByteArray*, QString* error) { return fail(error, kWindowsOnlySecureSession); }
+QByteArray SecureSession::makeAuthentication(QString* error) { fail(error, kWindowsOnlySecureSession); return {}; }
+bool SecureSession::receiveAuthentication(const QByteArray&, QByteArray*, QString* error) { return fail(error, kWindowsOnlySecureSession); }
+bool SecureSession::receiveConfirmation(const QByteArray&, QByteArray*, QString* error) { return fail(error, kWindowsOnlySecureSession); }
+QByteArray SecureSession::makeConfirmationMessage(bool, QString* error) { fail(error, kWindowsOnlySecureSession); return {}; }
+bool SecureSession::approvePeer(QString* error) { return fail(error, kWindowsOnlySecureSession); }
+void SecureSession::setPinnedPeerPublicKey(const QByteArray&) {}
+QByteArray SecureSession::peerIdentityPublicKey() const { return {}; }
+QByteArray SecureSession::peerFingerprint() const { return {}; }
+QString SecureSession::shortAuthenticationString() const { return {}; }
+QByteArray SecureSession::encryptRecord(uint8_t, const QByteArray&, QString* error) { fail(error, kWindowsOnlySecureSession); return {}; }
+bool SecureSession::decryptRecord(const QByteArray&, uint8_t*, QByteArray*, QString* error) { return fail(error, kWindowsOnlySecureSession); }
 #endif

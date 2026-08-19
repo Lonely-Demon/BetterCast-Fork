@@ -118,6 +118,14 @@ class SecurityHardeningRegressionTests(unittest.TestCase):
         self.assertIn("secure authentication required", listener)
         self.assertIn("m_secureSessionEstablished.value(socket, false)", listener)
         self.assertIn("m_udpSocket = nullptr", listener)
+        self.assertIn("processSecureHandshake", listener)
+        self.assertIn("processSecureRecord", listener)
+        self.assertIn("pairingRequired", listener)
+        self.assertIn("bool NetworkListener::approvePairing()", listener)
+        self.assertIn("session->encryptRecord(kControlType, payload", listener)
+        cmake = self.read("Sources/BetterCastReceiverDesktop/CMakeLists.txt")
+        self.assertIn("if(WIN32)\n    target_sources(BetterCastReceiver PRIVATE", cmake)
+        self.assertIn("target_link_libraries(BetterCastReceiver PRIVATE bcrypt crypt32)", cmake)
 
     def test_secure_udp_and_android_sender_plaintext_paths_are_disabled(self):
         viewmodel = self.read("Sources/BetterCastReceiverAndroid/app/src/main/java/com/bettercast/receiver/viewmodel/ReceiverViewModel.kt")
