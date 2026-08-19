@@ -54,7 +54,7 @@ The final target is a Windows–Android ecosystem companion rather than a single
 
 ## Open issues to resolve autonomously
 
-- Complete the post-CMake Linux validation and retain the successful Windows all-in-one validation as the primary Windows release gate.
+- Re-run the post-CMake Linux validation when Linux coverage becomes useful; run `32225528306` was cancelled after stalling in system-dependency installation. The successful Windows all-in-one validation remains the primary Windows release gate.
 - Run automated Android and repository regression tests after each fix; the Android secure-v2 artifact and 13 repository tests currently pass.
 - Add independent black-box interoperability and negative tests for SAS mismatch, changed pinned identity, sequence replay, malformed ciphertext, oversized records, and disconnect races.
 - Add capability negotiation and explicit revocation before file transfer, clipboard, audio, or expanded remote-control features.

@@ -22,7 +22,7 @@ The implemented milestone combines Windows as the sender with Android as the rec
 | Android APK downloaded locally | `artifacts/android-48ab4f6/app-debug.apk`, 9,115,415 bytes |
 | Android APK SHA-256 | `fca16864585ed21cf2768f5dcc6cb7e7a8c520ae06b5c286bde85349127def1f` |
 | Repository regression tests | **13 passing** |
-| Linux validation | The post-CMake-fix run was still in progress when this handoff was updated; Windows all-in-one validation is successful |
+| Linux validation | Post-CMake-fix run [`32225528306`](https://github.com/Lonely-Demon/BetterCast-Fork/actions/runs/32225528306) was cancelled after remaining stalled in system-dependency installation; Linux is deprioritized and not a release gate |
 
 The Windows all-in-one workflow uses Qt 6.7.3, the Ninja generator, and FFmpeg with OpenH264 rather than the previously failing x264 vcpkg feature. The successful package includes the combined sender/receiver application, Windows software-OpenGL fallback deployment, verified VDD payload, and the SecureSession implementation. The current source revision was built successfully by run `32225528285`.
 
