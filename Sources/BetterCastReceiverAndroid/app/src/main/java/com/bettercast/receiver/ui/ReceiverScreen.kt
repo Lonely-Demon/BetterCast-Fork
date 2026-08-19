@@ -11,6 +11,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
@@ -139,50 +140,6 @@ private fun WaitingView(
             textAlign = TextAlign.Center
         )
 
-        Text(
-            text = "This phone is in Receive mode. In Second Display mode it shows the Windows display; in Phone Control mode it keeps its normal Android UI.",
-            fontSize = 12.sp,
-            color = Color(0xFF64B5F6),
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
-        )
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        Text(
-            text = "Phone Control requires the user-enabled BetterCast Accessibility Service. BetterCast does not read window contents.",
-            fontSize = 11.sp,
-            color = Color(0xFFAAAAAA),
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(horizontal = 24.dp)
-        )
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Button(
-            onClick = onOpenAccessibilitySettings,
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF333333))
-        ) {
-            Text("Open Accessibility Settings")
-        }
-
-        Button(
-            onClick = onTogglePhoneControl,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = if (phoneControlEnabled) Color(0xFFB71C1C) else Color(0xFF1565C0)
-            )
-        ) {
-            Text(if (phoneControlEnabled) "Disable Phone Control" else "Arm Phone Control")
-        }
-
-        Text(
-            text = phoneControlStatus,
-            fontSize = 11.sp,
-            color = if (phoneControlEnabled) Color(0xFF81C784) else Color(0xFFAAAAAA),
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(horizontal = 24.dp)
-        )
-
         if (deviceIp != null && port > 0) {
             Spacer(modifier = Modifier.height(24.dp))
 
@@ -203,11 +160,62 @@ private fun WaitingView(
             )
         }
 
-        Spacer(modifier = Modifier.height(32.dp))
+        Spacer(modifier = Modifier.height(20.dp))
 
-        // ADB Setup Instructions
         Text(
-            text = "ADB Setup (USB or Wireless)",
+            text = "Windows Phone Control",
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = Color(0xFFAAAAAA)
+        )
+
+        Spacer(modifier = Modifier.height(6.dp))
+
+        Text(
+            text = "Use the Windows mouse on this phone over Wi-Fi while keeping the normal Android UI visible.",
+            fontSize = 11.sp,
+            color = Color(0xFF777777),
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 24.dp)
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Button(
+                onClick = onOpenAccessibilitySettings,
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF333333)),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Text("Accessibility", fontSize = 12.sp)
+            }
+
+            Button(
+                onClick = onTogglePhoneControl,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (phoneControlEnabled) Color(0xFFB71C1C) else Color(0xFF1565C0)
+                ),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Text(if (phoneControlEnabled) "Disarm Control" else "Arm Control", fontSize = 12.sp)
+            }
+        }
+
+        Text(
+            text = phoneControlStatus,
+            fontSize = 11.sp,
+            color = if (phoneControlEnabled) Color(0xFF81C784) else Color(0xFFAAAAAA),
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp)
+        )
+
+        Spacer(modifier = Modifier.height(20.dp))
+
+        Text(
+            text = "Windows Wi-Fi setup",
             fontSize = 13.sp,
             fontWeight = FontWeight.SemiBold,
             color = Color(0xFFAAAAAA)
@@ -216,12 +224,10 @@ private fun WaitingView(
         Spacer(modifier = Modifier.height(8.dp))
 
         Text(
-            text = "1. Enable Developer Options:\n" +
-                    "    Settings > About Phone > tap Build Number 7x\n" +
-                    "2. Enable USB Debugging:\n" +
-                    "    Settings > Developer Options > USB Debugging\n" +
-                    "3. Connect USB and tap \"Allow\" on the prompt\n" +
-                    "4. Use ADB USB or ADB Wireless in the sender app",
+            text = "1. Keep this phone and the Windows laptop on the same Wi-Fi network.\n" +
+                    "2. Start BetterCast on Windows and choose Send Screen or Phone Control.\n" +
+                    "3. Select this receiver, or enter the address shown above.\n" +
+                    "4. For Phone Control, enable BetterCast Accessibility once in Android Settings.",
             fontSize = 11.sp,
             color = Color(0xFF777777),
             textAlign = TextAlign.Start,

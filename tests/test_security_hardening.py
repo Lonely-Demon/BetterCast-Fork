@@ -44,10 +44,28 @@ class SecurityHardeningRegressionTests(unittest.TestCase):
         self.assertIn("This PC is a receiver and is waiting for a sender", desktop)
         self.assertIn("Enter the sender's IP address (not this PC's address)", desktop)
         self.assertIn("tap Send at the top", desktop)
-        self.assertIn("In Second Display mode it shows the Windows display", android_receiver)
-        self.assertIn("Phone Control requires the user-enabled BetterCast Accessibility Service", android_receiver)
-        self.assertIn("Windows, Linux, or Mac BetterCast Receiver", android_sender)
-        self.assertNotIn("On your Mac, run:", android_sender)
+        self.assertIn("Windows Phone Control", android_receiver)
+        self.assertIn("Windows Wi-Fi setup", android_receiver)
+        self.assertIn("Accessibility", android_receiver)
+        self.assertIn("Windows BetterCast Receiver", android_sender)
+        self.assertNotIn("Mac", android_sender)
+        self.assertNotIn("Linux", android_sender)
+        self.assertNotIn("adb forward", android_sender)
+
+    def test_android_ui_restores_original_structure_and_windows_wording(self):
+        receiver = self.read("Sources/BetterCastReceiverAndroid/app/src/main/java/com/bettercast/receiver/ui/ReceiverScreen.kt")
+        sender = self.read("Sources/BetterCastReceiverAndroid/app/src/main/java/com/bettercast/receiver/sender/SenderScreen.kt")
+        self.assertIn('text = "BetterCast"', receiver)
+        self.assertIn('text = "Android Receiver"', receiver)
+        self.assertIn('text = "Connect manually:"', receiver)
+        self.assertIn('text = "Windows Wi-Fi setup"', receiver)
+        self.assertIn('text = "Android Sender"', sender)
+        self.assertIn("Windows BetterCast Receiver", sender)
+        for source in (receiver, sender):
+            self.assertNotIn("Mac", source)
+            self.assertNotIn("macOS", source)
+            self.assertNotIn("ADB Setup", source)
+            self.assertNotIn("adb forward", source)
 
     def test_android_phone_control_is_explicit_and_bounded(self):
         manifest = self.read("Sources/BetterCastReceiverAndroid/app/src/main/AndroidManifest.xml")

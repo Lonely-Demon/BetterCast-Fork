@@ -117,7 +117,7 @@ private fun IdleView(statusMessage: String, onStartCasting: () -> Unit) {
         Spacer(modifier = Modifier.height(32.dp))
 
         Text(
-            text = "Your Android screen will be streamed\nto a Windows, Linux, or Mac BetterCast Receiver",
+            text = "Your Android screen will be streamed\nto a Windows BetterCast Receiver",
             fontSize = 12.sp,
             color = Color(0xFF777777),
             textAlign = TextAlign.Center,
@@ -171,7 +171,7 @@ private fun WaitingView(statusMessage: String, port: Int, onStop: () -> Unit) {
             Spacer(modifier = Modifier.height(24.dp))
 
             Text(
-                text = "On the receiving computer, run:",
+                text = "On the Windows laptop, open BetterCast Receiver:",
                 fontSize = 12.sp,
                 color = Color.Gray
             )
@@ -179,7 +179,7 @@ private fun WaitingView(statusMessage: String, port: Int, onStop: () -> Unit) {
             Spacer(modifier = Modifier.height(4.dp))
 
             Text(
-                text = "adb forward tcp:$port tcp:$port",
+                text = "Connect over Wi-Fi on port $port",
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color(0xFF64B5F6),
@@ -189,7 +189,7 @@ private fun WaitingView(statusMessage: String, port: Int, onStop: () -> Unit) {
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "Then connect BetterCast Receiver\nto localhost:$port",
+                text = "Keep the phone and Windows laptop\non the same Wi-Fi network",
                 fontSize = 12.sp,
                 color = Color(0xFF777777),
                 textAlign = TextAlign.Center,
