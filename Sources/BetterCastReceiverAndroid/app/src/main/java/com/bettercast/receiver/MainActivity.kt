@@ -65,6 +65,11 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // The receiver UI is a portrait control/status surface. The streamed
+        // content itself is rendered by the connected SurfaceView and must not
+        // force the setup screen into landscape.
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+
         // Keep screen on
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
@@ -158,7 +163,7 @@ fun AppContent(
                         // Set orientation and start the new mode
                         when (newMode) {
                             AppMode.RECEIVER -> {
-                                activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                                activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
                                 receiverViewModel.retry()
                             }
                             AppMode.SENDER -> {

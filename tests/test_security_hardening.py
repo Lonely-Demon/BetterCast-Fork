@@ -67,6 +67,16 @@ class SecurityHardeningRegressionTests(unittest.TestCase):
             self.assertNotIn("ADB Setup", source)
             self.assertNotIn("adb forward", source)
 
+    def test_android_receiver_stays_portrait_and_setup_is_scrollable(self):
+        manifest = self.read("Sources/BetterCastReceiverAndroid/app/src/main/AndroidManifest.xml")
+        activity = self.read("Sources/BetterCastReceiverAndroid/app/src/main/java/com/bettercast/receiver/MainActivity.kt")
+        receiver = self.read("Sources/BetterCastReceiverAndroid/app/src/main/java/com/bettercast/receiver/ui/ReceiverScreen.kt")
+        self.assertNotIn('android:screenOrientation="sensorLandscape"', manifest)
+        self.assertIn("requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT", activity)
+        self.assertNotIn("SCREEN_ORIENTATION_SENSOR_LANDSCAPE", activity)
+        self.assertIn("verticalScroll(rememberScrollState())", receiver)
+        self.assertIn('text = "Windows Wi-Fi setup"', receiver)
+
     def test_android_phone_control_is_explicit_and_bounded(self):
         manifest = self.read("Sources/BetterCastReceiverAndroid/app/src/main/AndroidManifest.xml")
         service = self.read("Sources/BetterCastReceiverAndroid/app/src/main/java/com/bettercast/receiver/control/BetterCastAccessibilityService.kt")
