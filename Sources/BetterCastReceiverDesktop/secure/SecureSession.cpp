@@ -324,7 +324,7 @@ bool SecureSession::importPublicKey(const QByteArray& publicKey, KeyHandle* key,
 bool SecureSession::deriveSecret(BCRYPT_KEY_HANDLE privateKey, BCRYPT_KEY_HANDLE peerPublicKey,
                                  QByteArray* secret, QString* error) {
     BCRYPT_SECRET_HANDLE agreement = nullptr;
-    NTSTATUS status = BCryptSecretAgreement(privateKey, peerPublicKey, &agreement, nullptr, 0, 0);
+    NTSTATUS status = BCryptSecretAgreement(privateKey, peerPublicKey, &agreement, 0);
     ULONG size = 0;
     if (status >= 0) {
         status = BCryptDeriveKey(agreement, BCRYPT_KDF_RAW_SECRET, nullptr, nullptr, 0, &size, 0);

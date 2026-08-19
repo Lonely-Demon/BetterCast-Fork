@@ -106,6 +106,8 @@ class SecurityHardeningRegressionTests(unittest.TestCase):
         self.assertIn("decryptRecord", sender)
         self.assertIn("AES-GCM", secure_cpp)
         self.assertIn("BCryptSecretAgreement", secure_cpp)
+        self.assertIn("BCryptSecretAgreement(privateKey, peerPublicKey, &agreement, 0)", secure_cpp)
+        self.assertNotIn("BCryptSecretAgreement(privateKey, peerPublicKey, &agreement, nullptr, 0, 0)", secure_cpp)
         self.assertIn("BCryptSignHash", secure_cpp)
         self.assertIn("CryptProtectData", secure_cpp)
         self.assertIn("kSuiteAes256GcmP256", secure_header)
