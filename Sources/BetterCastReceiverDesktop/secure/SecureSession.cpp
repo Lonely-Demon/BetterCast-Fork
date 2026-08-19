@@ -618,6 +618,14 @@ QByteArray SecureSession::makeConfirmation(bool initiatorConfirmation, QString* 
     return message;
 }
 
+QByteArray SecureSession::makeConfirmationMessage(bool initiatorConfirmation, QString* error) {
+    if (m_state != State::HandshakeConfirmed && m_state != State::AwaitingApproval) {
+        fail(error, "Secure confirmation is not valid in the current state");
+        return {};
+    }
+    return makeConfirmation(initiatorConfirmation, error);
+}
+
 bool SecureSession::verifyConfirmation(const QByteArray& message, bool initiatorConfirmation, QString* error) {
     if (message.size() != 1 + 32 || static_cast<uint8_t>(message[0]) != kConfirmation) {
         return fail(error, "Invalid secure confirmation message");

@@ -32,16 +32,16 @@ NetworkSender::NetworkSender(QObject* parent)
         m_retryCount = 0;
         m_readBuffer.clear();
         loadPeerTrust();
-        QString error;
-        if (!m_secureSession->loadOrCreateIdentity(identityPath(), &error)) {
-            emit error(QString("Secure identity initialization failed: %1").arg(error));
+        QString secureError;
+        if (!m_secureSession->loadOrCreateIdentity(identityPath(), &secureError)) {
+            emit error(QString("Secure identity initialization failed: %1").arg(secureError));
             m_socket->abort();
             return;
         }
         m_secureSession->setPinnedPeerPublicKey(m_pinnedPeerPublicKey);
-        const QByteArray hello = m_secureSession->makeHello(&error);
+        const QByteArray hello = m_secureSession->makeHello(&secureError);
         if (hello.isEmpty() || !sendFramed(hello)) {
-            emit error(QString("Secure handshake start failed: %1").arg(error));
+            emit error(QString("Secure handshake start failed: %1").arg(secureError));
             m_socket->abort();
             return;
         }
@@ -182,19 +182,19 @@ void NetworkSender::processIncoming() {
 }
 
 void NetworkSender::handleHandshakeMessage(const QByteArray& message) {
-    QString error;
+    QString secureError;
     QByteArray response;
     const uint8_t type = static_cast<uint8_t>(message[0]);
     bool ok = false;
     if (message.size() >= 2 && message[0] == 'B' && message[1] == 'C') {
-        ok = m_secureSession->receiveHelloReply(message, &response, &error);
+        ok = m_secureSession->receiveHelloReply(message, &response, &secureError);
     } else if (type == kAuthenticationType) {
-        ok = m_secureSession->receiveAuthentication(message, &response, &error);
+        ok = m_secureSession->receiveAuthentication(message, &response, &secureError);
         if (ok && m_secureSession->state() == SecureSession::State::HandshakeConfirmed) {
-            response = m_secureSession->makeConfirmation(true, &error);
+            response = m_secureSession->makeConfirmationMessage(true, &secureError);
         }
     } else if (type == kConfirmationType) {
-        ok = m_secureSession->receiveConfirmation(message, &response, &error);
+        ok = m_secureSession->receiveConfirmation(message, &response, &secureError);
         if (ok && m_secureSession->needsPeerApproval()) {
             if (m_secureSession->hasPinnedPeer()) {
                 ok = approvePairing();
@@ -208,10 +208,10 @@ void NetworkSender::handleHandshakeMessage(const QByteArray& message) {
         }
     } else {
         ok = false;
-        error = "Unexpected secure handshake message";
+        secureError = "Unexpected secure handshake message";
     }
     if (!ok) {
-        emit error(error.isEmpty() ? "Secure handshake failed" : error);
+        emit error(secureError.isEmpty() ? "Secure handshake failed" : secureError);
         m_socket->abort();
         return;
     }
@@ -230,9 +230,9 @@ void NetworkSender::handleSecureRecord(const QByteArray& record) {
     }
     uint8_t type = 0;
     QByteArray payload;
-    QString error;
-    if (!m_secureSession->decryptRecord(record, &type, &payload, &error)) {
-        emit error(error.isEmpty() ? "Secure record authentication failed" : error);
+    QString secureError;
+    if (!m_secureSession->decryptRecord(record, &type, &payload, &secureError)) {
+        emit error(secureError.isEmpty() ? "Secure record authentication failed" : secureError);
         m_socket->abort();
         return;
     }
@@ -269,10 +269,10 @@ void NetworkSender::sendPacket(uint8_t type, const QByteArray& payload) {
         }
         return;
     }
-    QString error;
-    const QByteArray record = m_secureSession->encryptRecord(type, payload, &error);
+    QString secureError;
+    const QByteArray record = m_secureSession->encryptRecord(type, payload, &secureError);
     if (record.isEmpty()) {
-        emit error(error.isEmpty() ? "Secure record encryption failed" : error);
+        emit error(secureError.isEmpty() ? "Secure record encryption failed" : secureError);
         return;
     }
     if (!sendFramed(record)) emit error("Unable to queue secure record");

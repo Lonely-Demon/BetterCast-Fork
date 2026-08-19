@@ -38,6 +38,7 @@ public:
     QByteArray makeAuthentication(QString* error = nullptr);
     bool receiveAuthentication(const QByteArray& message, QByteArray* response, QString* error = nullptr);
     bool receiveConfirmation(const QByteArray& message, QByteArray* response, QString* error = nullptr);
+    QByteArray makeConfirmationMessage(bool initiatorConfirmation, QString* error = nullptr);
 
     State state() const { return m_state; }
     bool isHandshakeConfirmed() const { return m_state == State::HandshakeConfirmed || isEstablished(); }
