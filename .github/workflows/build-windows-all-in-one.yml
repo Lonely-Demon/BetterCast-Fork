@@ -10,6 +10,9 @@ on:
 
 env:
   QT_VERSION: '6.7.3'
+  VDD_VERSION: '25.7.23'
+  VDD_DRIVER_SHA256: 'e24210692b442b39af763536330ce78b423f19342b7a7792c26de3944e418b3a'
+  VDD_CONTROL_SHA256: 'a701f2272e9fcf382849b24f913c6dd07597b3b1116525f2e90182f019609154'
 
 jobs:
   build-windows-all-in-one:
@@ -54,6 +57,38 @@ jobs:
         env:
           VCPKG_ROOT: C:/vcpkg
 
+      - name: Download and verify Virtual Display Driver
+        shell: pwsh
+        run: |
+          function Assert-Sha256([string]$Path, [string]$Expected) {
+            $actual = (Get-FileHash -Algorithm SHA256 $Path).Hash.ToLowerInvariant()
+            if ($actual -ne $Expected.ToLowerInvariant()) {
+              throw "SHA-256 mismatch for $Path: expected $Expected, got $actual"
+            }
+          }
+          $baseUrl = "https://github.com/VirtualDrivers/Virtual-Display-Driver/releases/download/$env:VDD_VERSION"
+          New-Item -ItemType Directory -Force vdd, vdd-driver-extract, vdd-control-extract | Out-Null
+
+          Invoke-WebRequest -Uri "$baseUrl/VirtualDisplayDriver-x86.Driver.Only.zip" -OutFile vdd-driver.zip
+          Assert-Sha256 vdd-driver.zip $env:VDD_DRIVER_SHA256
+          Expand-Archive -Path vdd-driver.zip -DestinationPath vdd-driver-extract
+          Get-ChildItem vdd-driver-extract -Recurse -File | ForEach-Object {
+            Copy-Item $_.FullName "vdd/$($_.Name)" -Force
+          }
+
+          Invoke-WebRequest -Uri "$baseUrl/VDD.Control.$env:VDD_VERSION.zip" -OutFile vdd-control.zip
+          Assert-Sha256 vdd-control.zip $env:VDD_CONTROL_SHA256
+          Expand-Archive -Path vdd-control.zip -DestinationPath vdd-control-extract
+          $control = Get-ChildItem vdd-control-extract -Recurse -Filter 'VDD Control.exe' | Select-Object -First 1
+          $devcon = Get-ChildItem vdd-control-extract -Recurse -Filter 'devcon.exe' | Select-Object -First 1
+          if (-not $control -or -not $devcon) { throw 'VDD Control.exe or devcon.exe missing from verified package' }
+          Copy-Item $control.FullName 'vdd/VDD Control.exe' -Force
+          Copy-Item $devcon.FullName 'vdd/devcon.exe' -Force
+
+          if (-not (Test-Path 'vdd/MttVDD.inf')) { throw 'Verified VDD package did not contain MttVDD.inf' }
+          Write-Host 'Verified VDD payload:'
+          Get-ChildItem vdd | Format-Table Name,Length
+
       - name: Generate Windows icon
         shell: pwsh
         run: |
@@ -87,11 +122,14 @@ jobs:
           if (Test-Path $vcpkgBin) {
             Get-ChildItem "$vcpkgBin/*.dll" | ForEach-Object { Copy-Item $_.FullName artifact/ -Force }
           }
+          New-Item -ItemType Directory -Force artifact/VirtualDisplayDriver | Out-Null
+          Copy-Item "vdd/*" "artifact/VirtualDisplayDriver/" -Force
           @"
           BetterCast all-in-one Windows sender/receiver build.
 
           Windows to Android second-monitor test:
           1. Start BetterCast.exe.
+          2. If prompted by Windows User Account Control, approve installation of the verified virtual-display driver.
           2. Open Send Screen.
           3. Select a monitor or create/select the optional virtual display.
           4. Enter the Android receiver IP and port 51820.

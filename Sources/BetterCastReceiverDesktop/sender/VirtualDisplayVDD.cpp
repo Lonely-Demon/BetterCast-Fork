@@ -23,6 +23,7 @@
 
 #ifdef _WIN32
 #include <Windows.h>
+#include <Shellapi.h>
 #include <dxgi.h>
 #include <SetupAPI.h>
 #include <devguid.h>
@@ -30,6 +31,41 @@
 
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "setupapi.lib")
+#pragma comment(lib, "shell32.lib")
+
+static bool runElevatedAndWait(const QString& program, const QString& parameters, DWORD* exitCode) {
+    std::wstring programW = program.toStdWString();
+    std::wstring parametersW = parameters.toStdWString();
+
+    SHELLEXECUTEINFOW executeInfo = {};
+    executeInfo.cbSize = sizeof(executeInfo);
+    executeInfo.fMask = SEE_MASK_NOCLOSEPROCESS;
+    executeInfo.lpVerb = L"runas";
+    executeInfo.lpFile = programW.c_str();
+    executeInfo.lpParameters = parametersW.c_str();
+    executeInfo.nShow = SW_HIDE;
+
+    if (!ShellExecuteExW(&executeInfo)) {
+        VDD_LOG(QString("VDD: UAC launch failed for %1, Win32 error %2")
+                    .arg(program).arg(GetLastError()));
+        return false;
+    }
+
+    DWORD waitResult = WaitForSingleObject(executeInfo.hProcess, 60000);
+    if (waitResult != WAIT_OBJECT_0) {
+        VDD_LOG(QString("VDD: Elevated process timed out or could not be waited on (result %1)")
+                    .arg(waitResult));
+        TerminateProcess(executeInfo.hProcess, 1);
+        CloseHandle(executeInfo.hProcess);
+        return false;
+    }
+
+    DWORD code = 1;
+    GetExitCodeProcess(executeInfo.hProcess, &code);
+    CloseHandle(executeInfo.hProcess);
+    if (exitCode) *exitCode = code;
+    return code == 0;
+}
 #endif
 
 // Known VDD installation paths (static fallbacks)
@@ -291,79 +327,61 @@ bool VirtualDisplayVDD::installDriver() {
 #ifdef _WIN32
     if (m_vddPath.isEmpty()) return false;
 
-    // Find devcon.exe (bundled in VDD directory or Dependencies subfolder)
+    // Find the signed devcon.exe bundled with the verified VDD Control package.
     QString devconExe = m_vddPath + "/devcon.exe";
     if (!QFileInfo::exists(devconExe)) {
         devconExe = m_vddPath + "/Dependencies/devcon.exe";
     }
 
-    // Find the MttVDD .inf file
-    QString infPath;
-    if (QFileInfo::exists(m_vddPath + "/MttVDD.inf")) {
-        infPath = m_vddPath + "/MttVDD.inf";
-    } else {
-        // Fall back to first .inf found
-        QDir vddDir(m_vddPath);
-        QStringList infFiles = vddDir.entryList({"*.inf"}, QDir::Files);
-        if (!infFiles.isEmpty()) {
-            infPath = m_vddPath + "/" + infFiles.first();
-        }
-    }
-
-    if (infPath.isEmpty()) {
-        VDD_LOG("VDD: No .inf files found in " + m_vddPath);
+    // Find the expected MttVDD package; never select an arbitrary INF.
+    const QString infPath = m_vddPath + "/MttVDD.inf";
+    if (!QFileInfo::exists(infPath)) {
+        VDD_LOG("VDD: Expected MttVDD.inf not found in " + m_vddPath);
         return false;
     }
 
-    // Method 1: devcon install — creates device node + installs driver (preferred for IDD)
+    // Installing a root indirect-display device requires elevation. The old
+    // QProcess path silently ran unelevated and produced the user's failure.
     if (QFileInfo::exists(devconExe)) {
-        VDD_LOG("VDD: Installing via devcon: " + devconExe + " install " + infPath + " Root\\MttVDD");
-        QProcess proc;
-        proc.setProgram(devconExe);
-        proc.setArguments({"install", infPath, "Root\\MttVDD"});
-        proc.start();
-        if (proc.waitForFinished(30000)) {
-            QString output = proc.readAllStandardOutput() + proc.readAllStandardError();
-            VDD_LOG("VDD: devcon output: " + output.trimmed());
-            if (proc.exitCode() == 0) {
-                VDD_LOG("VDD: Driver device created via devcon");
-                QThread::msleep(2000);
-                return true;
-            }
+        DWORD exitCode = 1;
+        const QString parameters = QString("install \"%1\" Root\\MttVDD")
+                                       .arg(infPath);
+        VDD_LOG("VDD: Requesting administrator approval to install via devcon: " + devconExe);
+        if (runElevatedAndWait(devconExe, parameters, &exitCode)) {
+            VDD_LOG("VDD: Elevated devcon created the device node");
+            QThread::msleep(2500);
+            if (isDriverLoaded()) return true;
+            VDD_LOG("VDD: devcon exited successfully but the driver is not yet visible");
+        } else {
+            VDD_LOG(QString("VDD: Elevated devcon failed with exit code %1").arg(exitCode));
         }
     } else {
-        VDD_LOG("VDD: devcon.exe not found, trying pnputil...");
+        VDD_LOG("VDD: devcon.exe not found; using elevated pnputil only");
     }
 
-    // Method 2: pnputil — adds driver to store (may not create device node for IDD)
-    VDD_LOG("VDD: Attempting pnputil /add-driver \"" + infPath + "\" /install");
-    QProcess proc;
-    proc.setProgram("pnputil");
-    proc.setArguments({"/add-driver", infPath, "/install"});
-    proc.start();
-    if (proc.waitForFinished(30000)) {
-        QString output = proc.readAllStandardOutput() + proc.readAllStandardError();
-        VDD_LOG("VDD: pnputil output: " + output.trimmed());
-        if (proc.exitCode() == 0) {
-            VDD_LOG("VDD: Driver added to store via pnputil");
+    // PnPUtil is the supported Windows driver-store path. It may not create
+    // the root IDD node by itself, but it is a useful signed-package fallback.
+    DWORD pnputilExitCode = 1;
+    const QString pnputilParameters = QString("/add-driver \"%1\" /install")
+                                          .arg(infPath);
+    VDD_LOG("VDD: Requesting administrator approval to run pnputil /add-driver");
+    const bool pnputilOk = runElevatedAndWait("pnputil.exe", pnputilParameters, &pnputilExitCode);
+    VDD_LOG(QString("VDD: Elevated pnputil exit code %1").arg(pnputilExitCode));
+
+    if (pnputilOk && QFileInfo::exists(devconExe)) {
+        DWORD devconExitCode = 1;
+        const QString deviceParameters = QString("install \"%1\" Root\\MttVDD")
+                                             .arg(infPath);
+        if (runElevatedAndWait(devconExe, deviceParameters, &devconExitCode)) {
+            VDD_LOG("VDD: Elevated devcon created the device node after pnputil");
+            QThread::msleep(2500);
+            if (isDriverLoaded()) return true;
         }
+        VDD_LOG(QString("VDD: Second elevated devcon attempt failed with exit code %1")
+                    .arg(devconExitCode));
     }
 
-    // After pnputil, try creating the device node explicitly
-    if (QFileInfo::exists(devconExe)) {
-        VDD_LOG("VDD: Creating device node via devcon...");
-        QProcess devProc;
-        devProc.setProgram(devconExe);
-        devProc.setArguments({"install", infPath, "Root\\MttVDD"});
-        devProc.start();
-        if (devProc.waitForFinished(30000) && devProc.exitCode() == 0) {
-            VDD_LOG("VDD: Device node created");
-            QThread::msleep(2000);
-            return true;
-        }
-    }
-
-    VDD_LOG("VDD: All driver install methods failed — devcon.exe may be required");
+    VDD_LOG("VDD: Installation did not produce a loaded driver; no silent fallback is attempted");
 #endif
     return false;
 }
@@ -486,9 +504,9 @@ bool VirtualDisplayVDD::createVirtualDisplay(int width, int height, int refreshR
     if (!isDriverLoaded()) {
         VDD_LOG("VDD: Driver files found but driver not loaded in Windows — attempting install...");
         if (!installDriver()) {
-            emit error("VDD driver files exist but the driver isn't installed in Windows. "
-                       "Try running 'VDD Control.exe' from the VirtualDisplayDriver folder, "
-                       "or run as admin: pnputil /add-driver MttVDD.inf /install");
+            emit error("Windows could not install the verified virtual-display driver. "
+                       "Approve the administrator prompt when BetterCast asks, then retry. "
+                       "If the prompt was cancelled, restart BetterCast and try Create Virtual Display again.");
             return false;
         }
         VDD_LOG("VDD: Driver installed successfully");

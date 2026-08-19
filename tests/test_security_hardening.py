@@ -99,6 +99,13 @@ class SecurityHardeningRegressionTests(unittest.TestCase):
         all_in_one = self.read(".github/workflows/build-windows-all-in-one.yml")
         self.assertIn("ffmpeg[openh264]", all_in_one)
         self.assertNotIn("ffmpeg[x264]", all_in_one)
+        self.assertIn("VDD_VERSION: '25.7.23'", all_in_one)
+        self.assertIn("VDD_DRIVER_SHA256:", all_in_one)
+        self.assertIn("VDD_CONTROL_SHA256:", all_in_one)
+        self.assertIn("VirtualDisplayDriver-x86.Driver.Only.zip", all_in_one)
+        self.assertIn("VDD.Control.$env:VDD_VERSION.zip", all_in_one)
+        self.assertIn("Test-Path 'vdd/MttVDD.inf'", all_in_one)
+        self.assertIn("artifact/VirtualDisplayDriver", all_in_one)
         windows = self.read(".github/workflows/build-windows-receiver.yml")
         linux = self.read(".github/workflows/build-linux-receiver.yml")
         self.assertIn("Assert-Sha256", windows)
@@ -106,6 +113,15 @@ class SecurityHardeningRegressionTests(unittest.TestCase):
         self.assertIn("sha256sum --check", linux)
         self.assertIn("ADB_LINUX_SHA256:", linux)
         self.assertIn("d230f13842f60f782a8645f9c813f8f845bf36089ea7289f28c48f17979313f1", linux)
+
+    def test_windows_vdd_install_requests_uac_and_creates_device(self):
+        vdd = self.read("Sources/BetterCastReceiverDesktop/sender/VirtualDisplayVDD.cpp")
+        self.assertIn("ShellExecuteExW", vdd)
+        self.assertIn('executeInfo.lpVerb = L"runas"', vdd)
+        self.assertIn("Root\\\\MttVDD", vdd)
+        self.assertIn("VDD: Requesting administrator approval", vdd)
+        self.assertIn("VDD: Elevated devcon created the device node", vdd)
+        self.assertNotIn("QProcess proc;\n        proc.setProgram(devconExe)", vdd)
 
 
 if __name__ == "__main__":
