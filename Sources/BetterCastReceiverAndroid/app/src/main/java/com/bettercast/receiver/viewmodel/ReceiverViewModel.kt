@@ -237,6 +237,7 @@ class ReceiverViewModel(application: Application) : AndroidViewModel(application
         // Prefer TCP if connected, fall back to UDP
         if (tcpServer.connectionState.value == ConnectionState.CONNECTED) {
             tcpServer.sendInputEvent(event)
+        }
     }
 
     /** Fully stop the receiver (release port). Used when switching to Sender mode. */

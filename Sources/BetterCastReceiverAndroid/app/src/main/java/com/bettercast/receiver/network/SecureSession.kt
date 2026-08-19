@@ -94,6 +94,7 @@ class SecureSession(
 
     private var _state = State.NEW
     val state: State get() = _state
+    fun isEstablished(): Boolean = _state == State.ESTABLISHED
     private var identityPrivateKey: PrivateKey? = null
     private var identityPublicKey: ByteArray = ByteArray(0)
     private var localNonce = ByteArray(0)

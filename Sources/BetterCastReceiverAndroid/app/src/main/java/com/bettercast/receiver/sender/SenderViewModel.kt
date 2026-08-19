@@ -51,8 +51,12 @@ class SenderViewModel(application: Application) : AndroidViewModel(application) 
                 when (connState) {
                     ConnectionState.CONNECTED -> {
                         _state.value = SenderState.CONNECTED
-                        _statusMessage.value = "Casting to Mac receiver"
+                        _statusMessage.value = "Casting to Windows receiver"
                         Log.i(TAG, "Receiver connected")
+                    }
+                    ConnectionState.PAIRING -> {
+                        _state.value = SenderState.WAITING
+                        _statusMessage.value = "Secure pairing required"
                     }
                     ConnectionState.LISTENING -> {
                         if (_state.value == SenderState.CONNECTED) {
@@ -72,8 +76,9 @@ class SenderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun startSending() {
-        if (_state.value != SenderState.IDLE && _state.value != SenderState.ERROR) return
-        _requestProjection.value = true
+        _state.value = SenderState.ERROR
+        _statusMessage.value = "Android sender mode is disabled until secure v2 transport is available"
+        _requestProjection.value = false
     }
 
     /**
@@ -117,11 +122,11 @@ class SenderViewModel(application: Application) : AndroidViewModel(application) 
         // 6. Start orientation polling to detect rotation while casting
         startOrientationPolling()
 
-        // 7. Start TCP server and wait for Mac receiver
+        // 7. Start TCP server and wait for Windows receiver
         val port = tcpSender.startListening()
         if (port > 0) {
             _state.value = SenderState.WAITING
-            _statusMessage.value = "Waiting for Mac receiver on port $port..."
+            _statusMessage.value = "Waiting for Windows receiver on port $port..."
             Log.i(TAG, "TCP server listening on port $port")
         } else {
             _state.value = SenderState.ERROR
