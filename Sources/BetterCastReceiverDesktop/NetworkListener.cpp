@@ -54,14 +54,9 @@ void NetworkListener::start() {
         }
     }
 
-    // Start UDP socket
-    m_udpSocket = new QUdpSocket(this);
-    if (m_udpSocket->bind(QHostAddress::Any, kDefaultUdpPort)) {
-        connect(m_udpSocket, &QUdpSocket::readyRead, this, &NetworkListener::onUdpReadyRead);
-        qDebug() << "UDP listening on port" << kDefaultUdpPort;
-    } else {
-        qWarning() << "UDP bind failed:" << m_udpSocket->errorString();
-    }
+    // UDP is disabled in secure v2 mode. The previous channel accepted
+    // unauthenticated datagrams and must not be exposed on public networks.
+    m_udpSocket = nullptr;
 
     // Heartbeat timer (every 500ms, matching Swift receiver)
     m_heartbeatTimer = new QTimer(this);
@@ -78,6 +73,7 @@ void NetworkListener::disconnectAll() {
     m_clients.clear();
     m_tcpBuffers.clear();
     m_connectionFormat.clear();
+    m_secureSessionEstablished.clear();
     {
         QMutexLocker lock(&m_udpMutex);
         m_udpBuffer.clear();
@@ -105,9 +101,9 @@ void NetworkListener::connectTo(const QString& host, uint16_t port) {
         LogManager::instance().log("Connected to " + socket->peerAddress().toString());
         m_clients.append(socket);
         m_tcpBuffers[socket] = QByteArray();
-        m_connectionFormat[socket] = -1; // auto-detect on first frame
-        emit connectionEstablished();
-        emit statusChanged("Connected to " + socket->peerAddress().toString());
+        m_connectionFormat[socket] = -1; // secure v2 handshake required
+        m_secureSessionEstablished[socket] = false;
+        emit statusChanged("TCP connected; secure authentication required");
     });
 
     connect(socket, &QTcpSocket::readyRead, this, &NetworkListener::onTcpReadyRead);
@@ -132,7 +128,8 @@ void NetworkListener::onNewTcpConnection() {
         qDebug() << "New TCP connection from" << socket->peerAddress().toString();
         m_clients.append(socket);
         m_tcpBuffers[socket] = QByteArray();
-        m_connectionFormat[socket] = -1; // auto-detect on first frame
+        m_connectionFormat[socket] = -1; // secure v2 handshake required
+        m_secureSessionEstablished[socket] = false;
         if (!m_udpPeerSet) {
             m_udpPeerAddress = socket->peerAddress();
             m_udpPeerSet = true;
@@ -141,8 +138,7 @@ void NetworkListener::onNewTcpConnection() {
         connect(socket, &QTcpSocket::readyRead, this, &NetworkListener::onTcpReadyRead);
         connect(socket, &QTcpSocket::disconnected, this, &NetworkListener::onTcpDisconnected);
 
-        emit connectionEstablished();
-        emit statusChanged("Connected from " + socket->peerAddress().toString());
+        emit statusChanged("TCP connected; secure authentication required");
     }
 }
 
@@ -204,7 +200,17 @@ void NetworkListener::processTcpBuffer(QTcpSocket* socket) {
             return;
         }
 
-        // Auto-detect framing format on first frame per connection.
+        // The legacy auto-detection path is intentionally disabled. A raw
+        // TCP peer must complete the secure v2 handshake before any body can
+        // reach a decoder or control path.
+        if (!m_secureSessionEstablished.value(socket, false)) {
+            qWarning() << "Rejecting unauthenticated TCP frame from" << socket->peerAddress().toString();
+            buffer.clear();
+            socket->disconnectFromHost();
+            return;
+        }
+
+        // Secure sessions do not use legacy auto-detection.
         // Type-byte format (Mac sender): [0x01=video|0x02=audio][payload]
         // Legacy format (Android/Swift): [8-byte PTS][NALUs] — first frame PTS=0 so byte[0]=0x00
         int& format = m_connectionFormat[socket];
@@ -283,6 +289,7 @@ void NetworkListener::onTcpDisconnected() {
     m_clients.removeAll(socket);
     m_tcpBuffers.remove(socket);
     m_connectionFormat.remove(socket);
+    m_secureSessionEstablished.remove(socket);
     if (m_clients.isEmpty()) {
         QMutexLocker lock(&m_udpMutex);
         m_udpBuffer.clear();
@@ -462,6 +469,9 @@ void NetworkListener::onHeartbeatTick() {
 }
 
 void NetworkListener::sendInputEvent(const InputEvent& event) {
+    // No plaintext reverse-control path is permitted. Secure v2 receiver
+    // support must set this gate only after authenticated session setup.
+    if (m_clients.isEmpty() || !m_secureSessionEstablished.value(m_clients.first(), false)) return;
     bool isCritical = (event.type == InputEventType::LeftMouseDown ||
                        event.type == InputEventType::LeftMouseUp ||
                        event.type == InputEventType::RightMouseDown ||

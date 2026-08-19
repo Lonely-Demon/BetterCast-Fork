@@ -57,29 +57,12 @@ class TcpSender {
      * Start listening for incoming receiver connections.
      */
     fun startListening(): Int {
-        if (_connectionState.value == ConnectionState.LISTENING ||
-            _connectionState.value == ConnectionState.CONNECTED
-        ) {
-            return listeningPort
-        }
-
-        _errorMessage.value = null
-
-        try {
-            val server = ServerSocket(DEFAULT_PORT)
-            serverSocket = server
-            listeningPort = server.localPort
-            _connectionState.value = ConnectionState.LISTENING
-
-            Log.d(TAG, "Listening on port $listeningPort")
-            startAcceptLoop(server)
-            return listeningPort
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to start server", e)
-            _connectionState.value = ConnectionState.ERROR
-            _errorMessage.value = "Failed to start listener: ${e.message}"
-            return 0
-        }
+        // Do not expose the historical plaintext sender listener. Secure v2
+        // receiver mode is the supported public-network path; Android sender
+        // mode remains disabled until it uses the same authenticated session.
+        _connectionState.value = ConnectionState.ERROR
+        _errorMessage.value = "Android sender mode is disabled until secure v2 transport is available"
+        return 0
     }
 
     private fun startAcceptLoop(server: ServerSocket) {

@@ -24,6 +24,8 @@ public:
     bool startControlOnly(const QString& receiverHost, uint16_t port = 51820);
     void stopSending();
     void sendControlJson(const QByteArray& json);
+    bool approvePairing();
+    bool isSecureEstablished() const;
     bool isSending() const { return m_sending; }
 
     // Monitor selection (adapter + output index from DXGI enumeration)
@@ -39,6 +41,7 @@ signals:
     void started();
     void stopped();
     void connected();
+    void pairingRequired(const QString& authenticationString, const QString& fingerprint);
     void disconnected();
     void error(const QString& message);
     void statusChanged(const QString& status);

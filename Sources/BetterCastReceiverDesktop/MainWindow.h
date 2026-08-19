@@ -173,6 +173,7 @@ private:
     QPushButton* m_sendBtn = nullptr;
     QPushButton* m_stopSendBtn = nullptr;
     QPushButton* m_controlConnectBtn = nullptr;
+    QPushButton* m_pairingApproveBtn = nullptr;
     QPushButton* m_phoneControlBtn = nullptr;
     QLabel* m_senderStatusLabel = nullptr;
 

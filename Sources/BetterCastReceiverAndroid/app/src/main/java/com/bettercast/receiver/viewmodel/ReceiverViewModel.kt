@@ -56,7 +56,13 @@ class ReceiverViewModel(application: Application) : AndroidViewModel(application
     private val _deviceIp = MutableStateFlow<String?>(null)
     val deviceIp: StateFlow<String?> = _deviceIp.asStateFlow()
 
-    val tcpServer = TcpClient()
+    private val _pairingCode = MutableStateFlow<String?>(null)
+    val pairingCode: StateFlow<String?> = _pairingCode.asStateFlow()
+
+    private val _pairingFingerprint = MutableStateFlow<String?>(null)
+    val pairingFingerprint: StateFlow<String?> = _pairingFingerprint.asStateFlow()
+
+    val tcpServer = TcpClient(application)
     val videoDecoder = VideoDecoder()
     private val serviceAdvertiser = ServiceAdvertiser(application)
     private var udpClient: UdpClient? = null
@@ -69,11 +75,18 @@ class ReceiverViewModel(application: Application) : AndroidViewModel(application
             tcpServer.connectionState.collect { connState ->
                 when (connState) {
                     ConnectionState.CONNECTED -> {
+                        _pairingCode.value = null
+                        _pairingFingerprint.value = null
                         wasConnected = true
                         BetterCastAccessibilityService.setSessionArmed(_phoneControlEnabled.value)
                         _state.value = ReceiverState.CONNECTED
                         _statusMessage.value = "Connected to sender (TCP)"
                         _connectedSenderName.value = tcpServer.connectedSenderName.value
+                    }
+                    ConnectionState.PAIRING -> {
+                        BetterCastAccessibilityService.setSessionArmed(false)
+                        _state.value = ReceiverState.WAITING
+                        _statusMessage.value = tcpServer.errorMessage.value ?: "Approve secure pairing on both devices"
                     }
                     ConnectionState.LISTENING -> {
                         BetterCastAccessibilityService.setSessionArmed(false)
@@ -105,6 +118,12 @@ class ReceiverViewModel(application: Application) : AndroidViewModel(application
                     }
                 }
             }
+        }
+
+        tcpServer.onPairingRequired = { code, fingerprint ->
+            _pairingCode.value = code
+            _pairingFingerprint.value = fingerprint
+            _statusMessage.value = "Secure pairing required: $code"
         }
 
         // Wire video decoder keyframe requests
@@ -160,31 +179,30 @@ class ReceiverViewModel(application: Application) : AndroidViewModel(application
             // Advertise via mDNS/Bonjour so the sender can find us
             serviceAdvertiser.startAdvertising(port)
 
-            // Start UDP client on the same port
-            val udp = UdpClient(port)
-            udp.onFrameReassembled = { data ->
-                videoDecoder.onFrameData(data)
-            }
-            udp.onGapDetected = {
-                videoDecoder.requestKeyframeIfNeeded()
-            }
-            udp.onSenderConnected = {
-                viewModelScope.launch {
-                    _state.value = ReceiverState.CONNECTED
-                    _statusMessage.value = "Connected to sender (UDP)"
-                    _connectedSenderName.value = "Sender (UDP)"
-                }
-            }
-            udp.start()
-            udpClient = udp
+            // UDP is intentionally disabled in secure v2 mode. The old path
+            // accepted unauthenticated datagrams and must not be exposed on
+            // public networks until it is bound to the authenticated session.
+            udpClient = null
         } else {
             _state.value = ReceiverState.ERROR
             _statusMessage.value = "Failed to start server"
         }
     }
 
+    fun approvePairing(): Boolean {
+        val approved = tcpServer.approvePendingPairing()
+        if (approved) {
+            _pairingCode.value = null
+            _pairingFingerprint.value = null
+            _statusMessage.value = "Secure pairing approved"
+        }
+        return approved
+    }
+
     fun disconnect() {
         _displaySuspended.value = false
+        _pairingCode.value = null
+        _pairingFingerprint.value = null
         BetterCastAccessibilityService.setSessionArmed(false)
         tcpServer.disconnect()
         udpClient?.stop()
@@ -193,26 +211,10 @@ class ReceiverViewModel(application: Application) : AndroidViewModel(application
         _state.value = ReceiverState.WAITING
         _statusMessage.value = "Waiting for sender to connect..."
 
-        // Restart UDP listener
-        val port = tcpServer.listeningPort
-        if (port > 0) {
-            val udp = UdpClient(port)
-            udp.onFrameReassembled = { data ->
-                videoDecoder.onFrameData(data)
-            }
-            udp.onGapDetected = {
-                videoDecoder.requestKeyframeIfNeeded()
-            }
-            udp.onSenderConnected = {
-                viewModelScope.launch {
-                    _state.value = ReceiverState.CONNECTED
-                    _statusMessage.value = "Connected to sender (UDP)"
-                    _connectedSenderName.value = "Sender (UDP)"
-                }
-            }
-            udp.start()
-            udpClient = udp
-        }
+                    // Secure v2 currently uses authenticated TCP only. Do not restart
+            // the legacy unauthenticated UDP listener on disconnect.
+            udpClient = null
+
     }
 
     fun setPhoneControlEnabled(enabled: Boolean): Boolean {
@@ -235,14 +237,13 @@ class ReceiverViewModel(application: Application) : AndroidViewModel(application
         // Prefer TCP if connected, fall back to UDP
         if (tcpServer.connectionState.value == ConnectionState.CONNECTED) {
             tcpServer.sendInputEvent(event)
-        } else if (udpClient?.isSenderConnected == true) {
-            udpClient?.sendInputEvent(event)
-        }
     }
 
     /** Fully stop the receiver (release port). Used when switching to Sender mode. */
     fun stopReceiver() {
         _displaySuspended.value = false
+        _pairingCode.value = null
+        _pairingFingerprint.value = null
         BetterCastAccessibilityService.setSessionArmed(false)
         serviceAdvertiser.stopAdvertising()
         tcpServer.stopListening()

@@ -69,6 +69,8 @@ bool SenderController::startSending(const QString& receiverHost, uint16_t port,
 
     connect(m_network, &NetworkSender::connected,
             this, &SenderController::onConnected);
+    connect(m_network, &NetworkSender::pairingRequired,
+            this, &SenderController::pairingRequired);
     connect(m_network, &NetworkSender::disconnected,
             this, &SenderController::onDisconnected);
     connect(m_network, &NetworkSender::error,
@@ -92,6 +94,8 @@ bool SenderController::startControlOnly(const QString& receiverHost, uint16_t po
     m_network = new NetworkSender(this);
     connect(m_network, &NetworkSender::connected,
             this, &SenderController::onConnected);
+    connect(m_network, &NetworkSender::pairingRequired,
+            this, &SenderController::pairingRequired);
     connect(m_network, &NetworkSender::disconnected,
             this, &SenderController::onDisconnected);
     connect(m_network, &NetworkSender::error,
@@ -103,6 +107,14 @@ bool SenderController::startControlOnly(const QString& receiverHost, uint16_t po
     emit statusChanged("Connecting for Phone Control...");
     m_network->connectTo(receiverHost, port);
     return true;
+}
+
+bool SenderController::approvePairing() {
+    return m_network && m_network->approvePairing();
+}
+
+bool SenderController::isSecureEstablished() const {
+    return m_network && m_network->isSecureEstablished();
 }
 
 void SenderController::sendControlJson(const QByteArray& json) {

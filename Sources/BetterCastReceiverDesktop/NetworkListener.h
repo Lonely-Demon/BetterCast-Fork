@@ -60,6 +60,7 @@ private:
     // Per-connection format detection: true = type-byte framing, false = legacy
     // -1 = not yet detected
     QHash<QTcpSocket*, int> m_connectionFormat;
+    QHash<QTcpSocket*, bool> m_secureSessionEstablished;
 
     // UDP
     QUdpSocket* m_udpSocket = nullptr;

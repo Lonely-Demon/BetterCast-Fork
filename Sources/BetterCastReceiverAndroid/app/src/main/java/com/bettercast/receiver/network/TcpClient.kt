@@ -1,6 +1,7 @@
 package com.bettercast.receiver.network
 
-import android.os.SystemClock
+import android.content.Context
+import android.util.Base64
 import android.util.Log
 import com.bettercast.receiver.input.InputEvent
 import kotlinx.coroutines.*
@@ -16,28 +17,31 @@ import java.io.IOException
 import java.net.ServerSocket
 import java.net.Socket
 import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
-enum class ConnectionState {
-    IDLE,
-    LISTENING,
-    CONNECTED,
-    ERROR
-}
+enum class ConnectionState { IDLE, LISTENING, CONNECTED, ERROR, PAIRING }
 
-class TcpClient {
+/** Secure Android receiver TCP endpoint. Plaintext media/control frames are rejected. */
+class TcpClient(private val context: Context) {
 
     companion object {
         private const val TAG = "TcpServer"
         private const val HEARTBEAT_INTERVAL_MS = 500L
-        const val DEFAULT_PORT = 51820
+        private const val DEFAULT_PORT = 51820
+        private const val MAX_HANDSHAKE_MESSAGE = 512
+        private const val MAX_FRAME_SIZE = 8 * 1024 * 1024
+        private const val CONTROL_TYPE = 0x03
+        private const val MAX_CONTROL_BYTES = 16 * 1024
+        private const val MAX_CONTROL_PER_SECOND = 240
+        private const val CONTROL_QUEUE_CAPACITY = 32
+        private const val PREFS = "bettercast_secure_transport"
+        private const val PEER_KEY = "windows_peer_public_key"
     }
 
     private val _connectionState = MutableStateFlow(ConnectionState.IDLE)
     val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
-
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
-
     private val _connectedSenderName = MutableStateFlow<String?>(null)
     val connectedSenderName: StateFlow<String?> = _connectedSenderName.asStateFlow()
 
@@ -45,200 +49,207 @@ class TcpClient {
     private var clientSocket: Socket? = null
     private var outputStream: DataOutputStream? = null
     private var inputStream: DataInputStream? = null
+    private var secureSession: SecureSession? = null
+    private var pendingSession: SecureSession? = null
+    private var pendingPairingJob: Job? = null
+    private var pendingPairingSocket: Socket? = null
 
-    private val sendQueue = Channel<ByteArray>(Channel.BUFFERED)
-
+    private val sendQueue = Channel<ByteArray>(CONTROL_QUEUE_CAPACITY)
     private var acceptJob: Job? = null
     private var readJob: Job? = null
     private var writeJob: Job? = null
     private var heartbeatJob: Job? = null
-
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     var onFrameReceived: ((ByteArray) -> Unit)? = null
+    var onAudioReceived: ((ByteArray) -> Unit)? = null
+    var onControlReceived: ((ByteArray) -> Unit)? = null
+    var onPairingRequired: ((authenticationString: String, fingerprint: String) -> Unit)? = null
 
-    /** The port the server is listening on (0 = not yet bound) */
     var listeningPort: Int = 0
         private set
 
-    /**
-     * Start listening for incoming connections.
-     * Returns the port number to advertise via NSD.
-     */
     fun startListening(): Int {
         if (_connectionState.value == ConnectionState.LISTENING ||
-            _connectionState.value == ConnectionState.CONNECTED) {
-            return listeningPort
-        }
-
+            _connectionState.value == ConnectionState.CONNECTED ||
+            _connectionState.value == ConnectionState.PAIRING) return listeningPort
         _errorMessage.value = null
-
-        try {
+        return try {
             val server = ServerSocket(DEFAULT_PORT)
             serverSocket = server
             listeningPort = server.localPort
             _connectionState.value = ConnectionState.LISTENING
-
-            Log.d(TAG, "Listening on port $listeningPort")
-
+            Log.d(TAG, "Listening securely on port $listeningPort")
             startAcceptLoop(server)
-            return listeningPort
+            listeningPort
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start server", e)
             _connectionState.value = ConnectionState.ERROR
-            _errorMessage.value = "Failed to start listener: ${e.message}"
-            return 0
+            _errorMessage.value = "Failed to start secure listener: ${e.message}"
+            0
         }
+    }
+
+    private fun readBounded(input: DataInputStream, max: Int): ByteArray? {
+        val length = try { input.readInt() } catch (_: IOException) { return null }
+        if (length <= 0 || length > max) return null
+        return try { ByteArray(length).also { input.readFully(it) } } catch (_: IOException) { null }
+    }
+
+    private fun writeFramed(output: DataOutputStream, data: ByteArray): Boolean {
+        if (data.isEmpty() || data.size > MAX_FRAME_SIZE) return false
+        return try {
+            output.writeInt(data.size)
+            output.write(data)
+            output.flush()
+            true
+        } catch (_: IOException) { false }
+    }
+
+    private fun loadPinnedPeer(session: SecureSession) {
+        val encoded = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(PEER_KEY, null) ?: return
+        runCatching { Base64.decode(encoded, Base64.DEFAULT) }.getOrNull()?.let(session::setPinnedPeerPublicKey)
+    }
+
+    private fun persistPeer(session: SecureSession) {
+        val publicKey = session.peerIdentityPublicKey()
+        if (publicKey.isEmpty()) return
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(PEER_KEY, Base64.encodeToString(publicKey, Base64.NO_WRAP)).apply()
+    }
+
+    private fun responderHandshake(socket: Socket, input: DataInputStream, output: DataOutputStream): SecureSession? {
+        val session = SecureSession(SecureSession.Role.RESPONDER, context)
+        if (!session.loadOrCreateIdentity()) return null
+        loadPinnedPeer(session)
+        val hello = readBounded(input, MAX_HANDSHAKE_MESSAGE) ?: return null
+        val reply = session.receiveHello(hello) ?: return null
+        if (!writeFramed(output, reply)) return null
+        val authentication = readBounded(input, MAX_HANDSHAKE_MESSAGE) ?: return null
+        val responseAuthentication = session.receiveAuthentication(authentication) ?: return null
+        if (!writeFramed(output, responseAuthentication)) return null
+        val confirmation = readBounded(input, MAX_HANDSHAKE_MESSAGE) ?: return null
+        val responseConfirmation = session.receiveConfirmation(confirmation) ?: return null
+        if (!writeFramed(output, responseConfirmation)) return null
+        if (session.hasPinnedPeer() && !session.approvePeer()) return null
+        return session
     }
 
     private fun startAcceptLoop(server: ServerSocket) {
         acceptJob = scope.launch {
             try {
                 while (isActive) {
-                    Log.d(TAG, "Waiting for sender connection...")
                     val socket = server.accept()
+                    if (_connectionState.value == ConnectionState.PAIRING) {
+                        socket.close()
+                        continue
+                    }
                     socket.tcpNoDelay = true
                     socket.keepAlive = true
                     socket.soTimeout = 15_000
-                    socket.receiveBufferSize = 524288  // 512KB — handles ADB tunnel jitter bursts
-                    socket.sendBufferSize = 65536      // 64KB for input events
-
-                    // Disconnect previous client if any
+                    socket.receiveBufferSize = 524288
+                    socket.sendBufferSize = 65536
                     disconnectClient()
-
+                    val input = DataInputStream(socket.getInputStream())
+                    val output = DataOutputStream(socket.getOutputStream())
+                    val session = responderHandshake(socket, input, output)
+                    if (session == null) {
+                        socket.close()
+                        continue
+                    }
                     clientSocket = socket
-                    outputStream = DataOutputStream(socket.getOutputStream())
-                    inputStream = DataInputStream(socket.getInputStream())
-
-                    val senderAddress = socket.remoteSocketAddress.toString()
-                    Log.d(TAG, "Sender connected from $senderAddress")
-                    _connectedSenderName.value = senderAddress
-                    _connectionState.value = ConnectionState.CONNECTED
-
-                    startReadLoop()
-                    startWriteLoop()
-                    startHeartbeat()
+                    inputStream = input
+                    outputStream = output
+                    secureSession = session
+                    if (session.isEstablished()) {
+                        activateSecureSession(socket)
+                    } else {
+                        pendingSession = session
+                        pendingPairingSocket = socket
+                        _connectionState.value = ConnectionState.PAIRING
+                        _errorMessage.value = "Approve pairing ${session.shortAuthenticationString()} on both devices"
+                        onPairingRequired?.invoke(session.shortAuthenticationString(), session.peerFingerprint())
+                        pendingPairingJob?.cancel()
+                        pendingPairingJob = launch {
+                            delay(60_000)
+                            if (pendingSession === session) handleClientDisconnect("Pairing approval timed out")
+                        }
+                    }
                 }
             } catch (e: IOException) {
-                if (isActive) {
-                    Log.e(TAG, "Accept error", e)
-                }
+                if (isActive) Log.e(TAG, "Accept error", e)
             }
         }
     }
 
-    /**
-     * Check if a frame contains a keyframe (IDR NALU type 5) or SPS (type 7).
-     * Frame format: [8 bytes PTS][4-byte NALU length][NALU data]...
-     */
-    private fun isKeyframe(frameData: ByteArray): Boolean {
-        if (frameData.size < 13) return false // 8 PTS + 4 length + 1 NALU min
-        var offset = 8 // skip PTS
-        while (offset + 4 < frameData.size) {
-            val naluLen = ((frameData[offset].toInt() and 0xFF) shl 24) or
-                    ((frameData[offset + 1].toInt() and 0xFF) shl 16) or
-                    ((frameData[offset + 2].toInt() and 0xFF) shl 8) or
-                    (frameData[offset + 3].toInt() and 0xFF)
-            offset += 4
-            if (naluLen <= 0 || offset + naluLen > frameData.size) break
-            val naluType = frameData[offset].toInt() and 0x1F
-            if (naluType == 5 || naluType == 7) return true // IDR or SPS
-            offset += naluLen
-        }
-        return false
+    private fun activateSecureSession(socket: Socket) {
+        pendingPairingJob?.cancel()
+        pendingPairingJob = null
+        pendingSession = null
+        pendingPairingSocket = null
+        socket.soTimeout = 0
+        _connectedSenderName.value = socket.remoteSocketAddress.toString()
+        _connectionState.value = ConnectionState.CONNECTED
+        _errorMessage.value = null
+        startReadLoop()
+        startWriteLoop()
+        startHeartbeat()
     }
 
-    var onAudioReceived: ((ByteArray) -> Unit)? = null
-
-    /** Control messages are JSON payloads carried in packet type 0x03. */
-    var onControlReceived: ((ByteArray) -> Unit)? = null
+    fun approvePendingPairing(): Boolean {
+        val session = pendingSession ?: return false
+        if (!session.approvePeer()) return false
+        persistPeer(session)
+        val socket = pendingPairingSocket ?: return false
+        activateSecureSession(socket)
+        return true
+    }
 
     private fun startReadLoop() {
         readJob?.cancel()
         readJob = scope.launch {
-            val input = inputStream ?: run {
-                Log.e(TAG, "Read loop: inputStream is null!")
-                return@launch
-            }
-            Log.i(TAG, "Read loop started, onFrameReceived=${onFrameReceived != null}")
+            val input = inputStream ?: return@launch
+            val session = secureSession ?: return@launch
             var frameCount = 0L
             var audioCount = 0L
-            var controlWindowStartMs = SystemClock.elapsedRealtime()
+            var controlWindowStartMs = android.os.SystemClock.elapsedRealtime()
             var controlCountInWindow = 0
             try {
-                while (isActive) {
-                    val length = input.readInt()
-                    if (length <= 0 || length > 10_000_000) {
-                        Log.w(TAG, "Invalid frame length: $length; closing peer")
-                        handleClientDisconnect("Invalid frame length")
-                        return@launch
-                    }
-
-                    val buffer = ByteArray(length)
-                    input.readFully(buffer)
-
-                    // Check for type byte prefix (added with audio streaming)
-                    // 0x01 = video, 0x02 = audio
-                    if (buffer.isNotEmpty()) {
-                        val typeByte = buffer[0].toInt() and 0xFF
-                        if (typeByte == 0x01 || typeByte == 0x02 || typeByte == 0x03) {
-                            if (buffer.size <= 1) {
-                                Log.w(TAG, "Truncated typed packet 0x${typeByte.toString(16)}; closing peer")
-                                handleClientDisconnect("Truncated typed packet")
-                                return@launch
-                            }
-                            if (typeByte == 0x01) {
-                                // Video packet — strip type byte
-                                val videoData = buffer.copyOfRange(1, buffer.size)
-                                frameCount++
-                                if (frameCount <= 5 || frameCount % 300 == 0L) {
-                                    val keyframe = isKeyframe(videoData)
-                                    Log.i(TAG, "Deliver frame #$frameCount: ${videoData.size} bytes${if (keyframe) " [KEYFRAME]" else ""}")
-                                }
-                                onFrameReceived?.invoke(videoData)
-                                continue
-                            } else if (typeByte == 0x02) {
-                                // Audio packet — strip type byte
-                                val audioData = buffer.copyOfRange(1, buffer.size)
-                                audioCount++
-                                if (audioCount <= 3 || audioCount % 200 == 0L) {
-                                    Log.i(TAG, "Audio packet #$audioCount: ${audioData.size} bytes")
-                                }
-                                onAudioReceived?.invoke(audioData)
-                                continue
-                            } else {
-                                // Control packet — bounded JSON payload, strip type byte.
-                                val now = SystemClock.elapsedRealtime()
-                                if (now - controlWindowStartMs >= 1_000L) {
-                                    controlWindowStartMs = now
-                                    controlCountInWindow = 0
-                                }
-                                controlCountInWindow++
-                                val controlData = buffer.copyOfRange(1, buffer.size)
-                                if (controlCountInWindow > 240) {
-                                    Log.w(TAG, "Dropping excessive control packet rate")
-                                } else if (controlData.size <= 16 * 1024) {
-                                    onControlReceived?.invoke(controlData)
-                                } else {
-                                    Log.w(TAG, "Dropping oversized control packet: ${controlData.size} bytes")
-                                }
-                                continue
-                            }
+                while (isActive && session.isEstablished()) {
+                    val record = readBounded(input, MAX_FRAME_SIZE) ?: throw IOException("Invalid or truncated secure record")
+                    val decoded = session.decryptRecord(record) ?: throw IOException("Secure record authentication or sequence failure")
+                    val type = decoded.first
+                    val payload = decoded.second
+                    when (type) {
+                        0x01 -> {
+                            frameCount++
+                            if (frameCount <= 5 || frameCount % 300 == 0L) Log.i(TAG, "Secure video frame #$frameCount: ${payload.size} bytes")
+                            onFrameReceived?.invoke(payload)
                         }
+                        0x02 -> {
+                            audioCount++
+                            if (audioCount <= 3 || audioCount % 200 == 0L) Log.i(TAG, "Secure audio packet #$audioCount: ${payload.size} bytes")
+                            onAudioReceived?.invoke(payload)
+                        }
+                        CONTROL_TYPE -> {
+                            val now = android.os.SystemClock.elapsedRealtime()
+                            if (now - controlWindowStartMs >= 1_000L) {
+                                controlWindowStartMs = now
+                                controlCountInWindow = 0
+                            }
+                            controlCountInWindow++
+                            if (controlCountInWindow > MAX_CONTROL_PER_SECOND || payload.size > MAX_CONTROL_BYTES) {
+                                throw IOException("Secure control rate or size limit exceeded")
+                            }
+                            onControlReceived?.invoke(payload)
+                        }
+                        else -> throw IOException("Unknown secure record type")
                     }
-
-                    // Legacy: no type byte, treat as video (backward compat)
-                    frameCount++
-                    if (frameCount <= 5 || frameCount % 300 == 0L) {
-                        val keyframe = isKeyframe(buffer)
-                        Log.i(TAG, "Deliver frame #$frameCount: ${buffer.size} bytes${if (keyframe) " [KEYFRAME]" else ""}")
-                    }
-                    onFrameReceived?.invoke(buffer)
                 }
             } catch (e: IOException) {
                 if (isActive) {
-                    Log.e(TAG, "Read error after $frameCount frames", e)
-                    handleClientDisconnect("Read error: ${e.message}")
+                    Log.e(TAG, "Secure read error after $frameCount frames", e)
+                    handleClientDisconnect("Secure session closed: ${e.message}")
                 }
             }
         }
@@ -251,14 +262,10 @@ class TcpClient {
             try {
                 for (data in sendQueue) {
                     if (!isActive) break
-                    output.write(data)
-                    output.flush()
+                    if (!writeFramed(output, data)) throw IOException("Secure write failed")
                 }
             } catch (e: IOException) {
-                if (isActive) {
-                    Log.e(TAG, "Write error", e)
-                    handleClientDisconnect("Write error: ${e.message}")
-                }
+                if (isActive) handleClientDisconnect("Secure write error: ${e.message}")
             }
         }
     }
@@ -274,24 +281,22 @@ class TcpClient {
     }
 
     fun sendInputEvent(event: InputEvent) {
+        val session = secureSession ?: return
+        if (!session.isEstablished()) return
+        val jsonBytes = Json.encodeToString(event).toByteArray(Charsets.UTF_8)
+        if (jsonBytes.isEmpty() || jsonBytes.size > MAX_CONTROL_BYTES) return
         val repeatCount = if (InputEvent.isCritical(event.type)) 3 else 1
-        val json = Json.encodeToString(event)
-        val jsonBytes = json.toByteArray(Charsets.UTF_8)
-
-        val packet = ByteBuffer.allocate(4 + jsonBytes.size)
-        packet.putInt(jsonBytes.size)
-        packet.put(jsonBytes)
-        val packetBytes = packet.array()
-
         repeat(repeatCount) {
-            sendQueue.trySend(packetBytes)
+            // Each retry must receive a fresh sequence number and nonce; reusing
+            // the same ciphertext would be rejected as a replay by the peer.
+            val record = session.encryptRecord(CONTROL_TYPE, jsonBytes) ?: return@repeat
+            if (!sendQueue.trySend(record).isSuccess) Log.w(TAG, "Dropping control event: secure queue full")
         }
     }
 
     private fun handleClientDisconnect(reason: String) {
-        Log.d(TAG, "Client disconnected: $reason")
+        Log.d(TAG, "Secure client disconnected: $reason")
         disconnectClient()
-        // Go back to listening state (server socket still open)
         if (serverSocket != null && !serverSocket!!.isClosed) {
             _connectionState.value = ConnectionState.LISTENING
             _errorMessage.value = reason
@@ -299,22 +304,18 @@ class TcpClient {
     }
 
     private fun disconnectClient() {
-        heartbeatJob?.cancel()
-        readJob?.cancel()
-        writeJob?.cancel()
-        heartbeatJob = null
-        readJob = null
-        writeJob = null
-
+        pendingPairingJob?.cancel()
+        pendingPairingJob = null
+        readJob?.cancel(); writeJob?.cancel(); heartbeatJob?.cancel()
+        readJob = null; writeJob = null; heartbeatJob = null
         _connectedSenderName.value = null
-
         try { inputStream?.close() } catch (_: Exception) {}
         try { outputStream?.close() } catch (_: Exception) {}
         try { clientSocket?.close() } catch (_: Exception) {}
-
-        inputStream = null
-        outputStream = null
-        clientSocket = null
+        try { pendingPairingSocket?.close() } catch (_: Exception) {}
+        inputStream = null; outputStream = null; clientSocket = null
+        pendingSession = null; pendingPairingSocket = null; secureSession = null
+        while (sendQueue.tryReceive().isSuccess) { }
     }
 
     fun disconnect() {
@@ -325,13 +326,9 @@ class TcpClient {
 
     fun stopListening() {
         disconnectClient()
-        acceptJob?.cancel()
-        acceptJob = null
-
+        acceptJob?.cancel(); acceptJob = null
         try { serverSocket?.close() } catch (_: Exception) {}
-        serverSocket = null
-        listeningPort = 0
-
+        serverSocket = null; listeningPort = 0
         _connectionState.value = ConnectionState.IDLE
         _errorMessage.value = null
     }

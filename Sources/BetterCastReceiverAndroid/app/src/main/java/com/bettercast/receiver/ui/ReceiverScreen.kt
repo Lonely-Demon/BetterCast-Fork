@@ -52,6 +52,8 @@ fun ReceiverScreen(viewModel: ReceiverViewModel) {
     val deviceIp by viewModel.deviceIp.collectAsState()
     val phoneControlEnabled by viewModel.phoneControlEnabled.collectAsState()
     val phoneControlStatus by viewModel.phoneControlStatus.collectAsState()
+    val pairingCode by viewModel.pairingCode.collectAsState()
+    val pairingFingerprint by viewModel.pairingFingerprint.collectAsState()
 
     Box(
         modifier = Modifier
@@ -66,6 +68,9 @@ fun ReceiverScreen(viewModel: ReceiverViewModel) {
                     port = viewModel.tcpServer.listeningPort,
                     phoneControlEnabled = phoneControlEnabled,
                     phoneControlStatus = phoneControlStatus,
+                    pairingCode = pairingCode,
+                    pairingFingerprint = pairingFingerprint,
+                    onApprovePairing = { viewModel.approvePairing() },
                     onOpenAccessibilitySettings = {
                         context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                     },
@@ -98,6 +103,9 @@ private fun WaitingView(
     port: Int,
     phoneControlEnabled: Boolean,
     phoneControlStatus: String,
+    pairingCode: String?,
+    pairingFingerprint: String?,
+    onApprovePairing: () -> Boolean,
     onOpenAccessibilitySettings: () -> Unit,
     onTogglePhoneControl: () -> Unit
 ) {
@@ -158,6 +166,45 @@ private fun WaitingView(
                 color = Color(0xFF64B5F6),
                 textAlign = TextAlign.Center
             )
+        }
+
+        if (pairingCode != null) {
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = "Secure pairing",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Color(0xFFFFD54F)
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Compare this code with Windows before approving.",
+                fontSize = 11.sp,
+                color = Color(0xFFAAAAAA),
+                textAlign = TextAlign.Center
+            )
+            Text(
+                text = pairingCode,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFFFFD54F)
+            )
+            if (!pairingFingerprint.isNullOrBlank()) {
+                Text(
+                    text = "Peer fingerprint: ${pairingFingerprint.take(16)}…",
+                    fontSize = 9.sp,
+                    color = Color(0xFF777777),
+                    textAlign = TextAlign.Center
+                )
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            Button(
+                onClick = { onApprovePairing() },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32)),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Text("Approve pairing", fontSize = 12.sp)
+            }
         }
 
         Spacer(modifier = Modifier.height(20.dp))

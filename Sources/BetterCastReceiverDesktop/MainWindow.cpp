@@ -257,9 +257,21 @@ MainWindow::MainWindow(QWidget* parent)
         if (m_senderStatusLabel) m_senderStatusLabel->setText("Error: " + msg);
         LogManager::instance().log("Sender error: " + msg);
     });
+    connect(m_sender, &SenderController::pairingRequired, this, [this](const QString& code, const QString& fingerprint) {
+        if (m_senderStatusLabel) {
+            m_senderStatusLabel->setText(QString("Secure pairing: compare %1 on Android, then approve here (peer %2…)")
+                                         .arg(code, fingerprint.left(16)));
+        }
+        if (m_pairingApproveBtn) {
+            m_pairingApproveBtn->setText(QString("Approve Secure Pairing (%1)").arg(code));
+            m_pairingApproveBtn->setEnabled(true);
+        }
+        LogManager::instance().log(QString("Secure pairing required; authentication code %1").arg(code));
+    });
     connect(m_sender, &SenderController::connected, this, [this]() {
-        if (m_senderStatusLabel) m_senderStatusLabel->setText("Sending screen...");
-        LogManager::instance().log("Sender: Connected and streaming");
+        if (m_senderStatusLabel) m_senderStatusLabel->setText("Secure session established — sending screen...");
+        if (m_pairingApproveBtn) m_pairingApproveBtn->setEnabled(false);
+        LogManager::instance().log("Sender: Secure session established and streaming");
     });
     connect(m_sender, &SenderController::stopped, this, [this]() {
         if (m_phoneControl) m_phoneControl->stop();
@@ -267,6 +279,10 @@ MainWindow::MainWindow(QWidget* parent)
         if (m_stopSendBtn) m_stopSendBtn->setEnabled(false);
         if (m_controlConnectBtn) m_controlConnectBtn->setEnabled(true);
         if (m_phoneControlBtn) m_phoneControlBtn->setEnabled(false);
+        if (m_pairingApproveBtn) {
+            m_pairingApproveBtn->setEnabled(false);
+            m_pairingApproveBtn->setText("Approve Secure Pairing");
+        }
         if (m_sendHostEdit) m_sendHostEdit->setEnabled(true);
     });
 
@@ -803,6 +819,16 @@ void MainWindow::setupSendPage() {
         }
     });
     controlBtnRow->addWidget(m_controlConnectBtn);
+
+    m_pairingApproveBtn = new QPushButton("Approve Secure Pairing");
+    m_pairingApproveBtn->setEnabled(false);
+    connect(m_pairingApproveBtn, &QPushButton::clicked, this, [this]() {
+        if (m_sender && m_sender->approvePairing()) {
+            m_pairingApproveBtn->setEnabled(false);
+            if (m_senderStatusLabel) m_senderStatusLabel->setText("Secure pairing approved");
+        }
+    });
+    controlBtnRow->addWidget(m_pairingApproveBtn);
 
     m_phoneControlBtn = new QPushButton("Activate Mouse Control");
     m_phoneControlBtn->setEnabled(false);
