@@ -73,6 +73,7 @@ fun ReceiverScreen(viewModel: ReceiverViewModel) {
                     pairingCode = pairingCode,
                     pairingFingerprint = pairingFingerprint,
                     onApprovePairing = { viewModel.approvePairing() },
+                    onResetWindowsPairing = { viewModel.resetWindowsPairing() },
                     onOpenAccessibilitySettings = {
                         context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                     },
@@ -108,6 +109,7 @@ private fun WaitingView(
     pairingCode: String?,
     pairingFingerprint: String?,
     onApprovePairing: () -> Boolean,
+    onResetWindowsPairing: () -> Unit,
     onOpenAccessibilitySettings: () -> Unit,
     onTogglePhoneControl: () -> Unit
 ) {
@@ -208,6 +210,14 @@ private fun WaitingView(
             ) {
                 Text("Approve pairing", fontSize = 12.sp)
             }
+        }
+
+        Button(
+            onClick = onResetWindowsPairing,
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF333333)),
+            shape = RoundedCornerShape(8.dp)
+        ) {
+            Text("Reset Windows Pairing", fontSize = 12.sp)
         }
 
         Spacer(modifier = Modifier.height(20.dp))

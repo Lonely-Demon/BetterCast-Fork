@@ -53,6 +53,7 @@ class TcpClient(private val context: Context) {
     private var pendingSession: SecureSession? = null
     private var pendingPairingJob: Job? = null
     private var pendingPairingSocket: Socket? = null
+    @Volatile private var lastHandshakeError: String? = null
 
     private val sendQueue = Channel<ByteArray>(CONTROL_QUEUE_CAPACITY)
     private var acceptJob: Job? = null
@@ -118,20 +119,33 @@ class TcpClient(private val context: Context) {
             .putString(PEER_KEY, Base64.encodeToString(publicKey, Base64.NO_WRAP)).apply()
     }
 
+    private fun handshakeFailure(stage: String): SecureSession? {
+        lastHandshakeError = stage
+        Log.e(TAG, "Secure handshake failed at $stage")
+        return null
+    }
+
     private fun responderHandshake(socket: Socket, input: DataInputStream, output: DataOutputStream): SecureSession? {
+        lastHandshakeError = null
         val session = SecureSession(SecureSession.Role.RESPONDER, context)
-        if (!session.loadOrCreateIdentity()) return null
+        if (!session.loadOrCreateIdentity()) return handshakeFailure("Android identity initialization")
         loadPinnedPeer(session)
-        val hello = readBounded(input, MAX_HANDSHAKE_MESSAGE) ?: return null
-        val reply = session.receiveHello(hello) ?: return null
-        if (!writeFramed(output, reply)) return null
-        val authentication = readBounded(input, MAX_HANDSHAKE_MESSAGE) ?: return null
-        val responseAuthentication = session.receiveAuthentication(authentication) ?: return null
-        if (!writeFramed(output, responseAuthentication)) return null
-        val confirmation = readBounded(input, MAX_HANDSHAKE_MESSAGE) ?: return null
-        val responseConfirmation = session.receiveConfirmation(confirmation) ?: return null
-        if (!writeFramed(output, responseConfirmation)) return null
-        if (session.hasPinnedPeer() && !session.approvePeer()) return null
+        val hello = readBounded(input, MAX_HANDSHAKE_MESSAGE)
+            ?: return handshakeFailure("hello read/length validation")
+        val reply = session.receiveHello(hello)
+            ?: return handshakeFailure("hello validation or ECDH setup")
+        if (!writeFramed(output, reply)) return handshakeFailure("hello reply write")
+        val authentication = readBounded(input, MAX_HANDSHAKE_MESSAGE)
+            ?: return handshakeFailure("authentication read/length validation")
+        val responseAuthentication = session.receiveAuthentication(authentication)
+            ?: return handshakeFailure("transcript authentication or pinned-peer validation")
+        if (!writeFramed(output, responseAuthentication)) return handshakeFailure("authentication reply write")
+        val confirmation = readBounded(input, MAX_HANDSHAKE_MESSAGE)
+            ?: return handshakeFailure("confirmation read/length validation")
+        val responseConfirmation = session.receiveConfirmation(confirmation)
+            ?: return handshakeFailure("key confirmation validation")
+        if (!writeFramed(output, responseConfirmation)) return handshakeFailure("confirmation reply write")
+        if (session.hasPinnedPeer() && !session.approvePeer()) return handshakeFailure("pinned-peer approval")
         return session
     }
 
@@ -154,6 +168,9 @@ class TcpClient(private val context: Context) {
                     val output = DataOutputStream(socket.getOutputStream())
                     val session = responderHandshake(socket, input, output)
                     if (session == null) {
+                        val reason = lastHandshakeError ?: "unknown stage"
+                        _errorMessage.value = "Secure handshake rejected: $reason"
+                        Log.e(TAG, "Closing unauthenticated peer: $reason")
                         socket.close()
                         continue
                     }
@@ -194,6 +211,13 @@ class TcpClient(private val context: Context) {
         startReadLoop()
         startWriteLoop()
         startHeartbeat()
+    }
+
+    fun clearPinnedPeer() {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(PEER_KEY).apply()
+        disconnectClient()
+        _errorMessage.value = "Saved Windows pairing cleared; the next connection requires approval"
+        Log.i(TAG, "Cleared persisted Windows peer identity")
     }
 
     fun approvePendingPairing(): Boolean {

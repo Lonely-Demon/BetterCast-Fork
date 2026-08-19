@@ -117,6 +117,9 @@ class SecurityHardeningRegressionTests(unittest.TestCase):
         self.assertIn("AES-GCM", secure_cpp)
         self.assertIn("BCryptSecretAgreement", secure_cpp)
         self.assertIn("BCryptSecretAgreement(privateKey, peerPublicKey, &agreement, 0)", secure_cpp)
+        self.assertIn("std::reverse(secret->begin(), secret->end())", secure_cpp)
+        self.assertIn("BCRYPT_KDF_RAW_SECRET", secure_cpp)
+        self.assertIn("little-endian order", secure_cpp)
         self.assertNotIn("BCryptSecretAgreement(privateKey, peerPublicKey, &agreement, nullptr, 0, 0)", secure_cpp)
         self.assertIn("BCryptSignHash", secure_cpp)
         self.assertIn("CryptProtectData", secure_cpp)
@@ -157,6 +160,22 @@ class SecurityHardeningRegressionTests(unittest.TestCase):
         self.assertIn("ConnectionState.IDLE", android)
         self.assertIn("BetterCastAccessibilityService.setSessionArmed(false)", android)
         self.assertIn("override fun onCleared()", android)
+
+    def test_secure_interop_recovery_and_sender_teardown_are_hardened(self):
+        secure_cpp = self.read("Sources/BetterCastReceiverDesktop/secure/SecureSession.cpp")
+        sender_cpp = self.read("Sources/BetterCastReceiverDesktop/sender/SenderController.cpp")
+        sender_h = self.read("Sources/BetterCastReceiverDesktop/sender/SenderController.h")
+        tcp = self.read("Sources/BetterCastReceiverAndroid/app/src/main/java/com/bettercast/receiver/network/TcpClient.kt")
+        vm = self.read("Sources/BetterCastReceiverAndroid/app/src/main/java/com/bettercast/receiver/viewmodel/ReceiverViewModel.kt")
+        screen = self.read("Sources/BetterCastReceiverAndroid/app/src/main/java/com/bettercast/receiver/ui/ReceiverScreen.kt")
+        self.assertIn("std::reverse(secret->begin(), secret->end())", secure_cpp)
+        self.assertIn("lastHandshakeError", tcp)
+        self.assertIn("transcript authentication or pinned-peer validation", tcp)
+        self.assertIn("clearPinnedPeer", tcp)
+        self.assertIn("resetWindowsPairing", vm)
+        self.assertIn("Reset Windows Pairing", screen)
+        self.assertIn("m_stopQueued", sender_h)
+        self.assertIn("Qt::QueuedConnection", sender_cpp)
 
     def test_windows_discovery_and_vdd_install_recovery_are_hardened(self):
         main_cpp = self.read("Sources/BetterCastReceiverDesktop/main.cpp")

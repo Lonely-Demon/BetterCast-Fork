@@ -60,6 +60,7 @@ private:
     bool m_sending = false;
     bool m_controlOnly = false;
     bool m_encoderReady = false;
+    bool m_stopQueued = false;
     int m_fps = 30;
     int m_bitrateMbps = 8;
     int m_adapterIndex = 0;

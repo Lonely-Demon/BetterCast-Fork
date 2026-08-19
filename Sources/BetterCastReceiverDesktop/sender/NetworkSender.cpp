@@ -39,17 +39,26 @@ NetworkSender::NetworkSender(QObject* parent)
             return;
         }
         m_secureSession->setPinnedPeerPublicKey(m_pinnedPeerPublicKey);
+        m_handshakeStarted = false;
         const QByteArray hello = m_secureSession->makeHello(&secureError);
+
         if (hello.isEmpty() || !sendFramed(hello)) {
+            m_handshakeStarted = false;
             emit error(QString("Secure handshake start failed: %1").arg(secureError));
             m_socket->abort();
             return;
         }
+        m_handshakeStarted = true;
         LogManager::instance().log("Sender: TCP connected; secure handshake started");
     });
 
     connect(m_socket, &QTcpSocket::disconnected, this, [this]() {
+        const bool closedDuringHandshake = m_handshakeStarted && !m_pairingPending;
+        if (closedDuringHandshake) {
+            LogManager::instance().log("Sender: Remote closed during secure handshake; Android may have rejected the peer identity or transcript");
+        }
         m_pairingPending = false;
+        m_handshakeStarted = false;
         m_readBuffer.clear();
         delete m_secureSession;
         m_secureSession = new SecureSession(SecureSession::Role::Initiator);
@@ -122,6 +131,7 @@ void NetworkSender::disconnect() {
     m_retryTimer.stop();
     m_retryCount = MaxRetries;
     m_pairingPending = false;
+    m_handshakeStarted = false;
     m_readBuffer.clear();
     if (m_socket->state() != QAbstractSocket::UnconnectedState) m_socket->abort();
     delete m_secureSession;
@@ -176,6 +186,10 @@ void NetworkSender::processIncoming() {
                    (static_cast<uint8_t>(message[0]) == kAuthenticationType ||
                     static_cast<uint8_t>(message[0]) == kConfirmationType)) {
             handleHandshakeMessage(message);
+        } else {
+            emit error("Unexpected plaintext or malformed secure handshake message");
+            m_socket->abort();
+            return;
         }
         if (m_socket->state() == QAbstractSocket::UnconnectedState) return;
     }
@@ -250,6 +264,7 @@ bool NetworkSender::approvePairing() {
     if (!m_secureSession || !m_secureSession->approvePeer()) return false;
     persistPeerTrust();
     m_pairingPending = false;
+    m_handshakeStarted = false;
     emit connected();
     LogManager::instance().log("Sender: secure session established");
     return true;

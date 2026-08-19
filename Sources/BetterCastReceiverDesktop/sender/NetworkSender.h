@@ -53,6 +53,7 @@ private:
     QByteArray m_readBuffer;
     QByteArray m_pinnedPeerPublicKey;
     bool m_pairingPending = false;
+    bool m_handshakeStarted = false;
     QString m_host;
     uint16_t m_port = 0;
     int m_retryCount = 0;

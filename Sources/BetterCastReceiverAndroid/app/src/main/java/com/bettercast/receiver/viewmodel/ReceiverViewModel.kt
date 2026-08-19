@@ -189,6 +189,14 @@ class ReceiverViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    fun resetWindowsPairing() {
+        _pairingCode.value = null
+        _pairingFingerprint.value = null
+        tcpServer.clearPinnedPeer()
+        _state.value = ReceiverState.WAITING
+        _statusMessage.value = "Windows pairing cleared; waiting for a new secure connection"
+    }
+
     fun approvePairing(): Boolean {
         val approved = tcpServer.approvePendingPairing()
         if (approved) {

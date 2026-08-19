@@ -32,7 +32,7 @@ SenderController::~SenderController() {
 
 bool SenderController::startSending(const QString& receiverHost, uint16_t port,
                                      int fps, int bitrateMbps) {
-    if (m_sending) {
+    if (m_sending || m_stopQueued) {
         qWarning() << "Sender: Already sending";
         return false;
     }
@@ -86,7 +86,7 @@ bool SenderController::startSending(const QString& receiverHost, uint16_t port,
 }
 
 bool SenderController::startControlOnly(const QString& receiverHost, uint16_t port) {
-    if (m_sending) {
+    if (m_sending || m_stopQueued) {
         qWarning() << "Sender: Already sending or controlling";
         return false;
     }
@@ -124,8 +124,12 @@ void SenderController::sendControlJson(const QByteArray& json) {
 }
 
 void SenderController::stopSending() {
-    if (!m_sending) return;
+    if (!m_sending) {
+        m_stopQueued = false;
+        return;
+    }
 
+    m_stopQueued = false;
     m_sending = false;
     m_controlOnly = false;
     m_encoderReady = false;
@@ -166,9 +170,16 @@ void SenderController::onConnected() {
 void SenderController::onDisconnected() {
     qDebug() << "Sender: Disconnected from receiver";
     emit disconnected();
-    if (m_sending) {
-        stopSending();
-    }
+    if (!m_sending || m_stopQueued) return;
+
+    // NetworkSender emits disconnected from inside its socket callback. Do
+    // not delete the sender, capture, or encoder from that callback stack;
+    // queue teardown after all socket signal handlers have returned.
+    m_stopQueued = true;
+    QMetaObject::invokeMethod(this, [this]() {
+        if (m_sending) stopSending();
+        else m_stopQueued = false;
+    }, Qt::QueuedConnection);
 }
 
 void SenderController::onFrameCaptured(const QByteArray& nv12, int width, int height) {

@@ -339,6 +339,12 @@ bool SecureSession::deriveSecret(BCRYPT_KEY_HANDLE privateKey, BCRYPT_KEY_HANDLE
         if (error) *error = ntStatus("P-256 ECDH", status);
         return false;
     }
+
+    // Microsoft documents BCRYPT_KDF_RAW_SECRET as returning the raw ECDH
+    // secret in little-endian order. Android KeyAgreement.generateSecret()
+    // exposes the same field in big-endian order. Normalize before HKDF so
+    // the two platform implementations derive identical session keys.
+    std::reverse(secret->begin(), secret->end());
     return true;
 }
 
