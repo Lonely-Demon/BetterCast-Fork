@@ -124,7 +124,7 @@ class SecurityHardeningRegressionTests(unittest.TestCase):
         self.assertIn("bool NetworkListener::approvePairing()", listener)
         self.assertIn("session->encryptRecord(kControlType, payload", listener)
         cmake = self.read("Sources/BetterCastReceiverDesktop/CMakeLists.txt")
-        self.assertIn("if(WIN32)\n    target_sources(BetterCastReceiver PRIVATE", cmake)
+        self.assertIn("target_sources(BetterCastReceiver PRIVATE\n    \"${CMAKE_CURRENT_SOURCE_DIR}/secure/SecureSession.cpp\"", cmake)
         self.assertIn("target_link_libraries(BetterCastReceiver PRIVATE bcrypt crypt32)", cmake)
 
     def test_secure_udp_and_android_sender_plaintext_paths_are_disabled(self):

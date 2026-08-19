@@ -162,14 +162,12 @@ endif()
 
 add_executable(BetterCastReceiver ${SOURCES} ${HEADERS} ${RESOURCES})
 
-# Keep the Windows secure-session implementation explicit in the target. This
-# prevents generator/source-list drift from silently producing an unauthenticated
-# receiver or sender binary that links against only the SecureSession declarations.
-if(WIN32)
-    target_sources(BetterCastReceiver PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}/secure/SecureSession.cpp"
-    )
-endif()
+# Keep the secure-session implementation explicit in the target. The source
+# contains Windows CNG crypto and fail-closed non-Windows stubs, preventing
+# generator/source-list drift from producing unresolved or plaintext paths.
+target_sources(BetterCastReceiver PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/secure/SecureSession.cpp"
+)
 
 if(ENABLE_STRICT_WARNINGS)
     if(MSVC)
