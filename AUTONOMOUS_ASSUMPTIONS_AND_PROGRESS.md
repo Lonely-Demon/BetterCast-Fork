@@ -2,7 +2,8 @@
 
 _Last updated: 2026-08-19_
 
-_Final validated code commit: `50fe4d8ebde372099a7059c0c70952938ed34e9f`; documentation-only handoff commits follow it._
+_Final validated code commit: `2d22954911c9fb2cd30b42a7cc83556b2bf186b0`; documentation-only handoff commits follow it._
+
 
 ## Final product target
 
@@ -35,8 +36,9 @@ The final target is a Windows–Android ecosystem companion rather than a single
 | Windows control-only sender API | Added to `SenderController` and `NetworkSender`. |
 | Windows Phone Control pointer milestone | Added: explicit control-only connection and center-anchored mouse movement/tap loop with Escape safety stop. This is not yet a true screen-edge handoff and does not yet provide full keyboard mapping. |
 | Android session cleanup | TCP disconnect, LISTENING/ERROR/IDLE transitions, explicit disconnect, and view-model teardown now disarm the AccessibilityService session and clear suspended-display state where applicable. |
-| Android debug APK | Successful CI artifact from run `32189181540` at code commit `50fe4d8ebde372099a7059c0c70952938ed34e9f`; downloaded APK SHA-256 is `cd3a2faca72819341834933bb8ecc397ac6d71898bb4cb56a45b0f2642c08c8c`. |
-| Windows all-in-one sender/receiver | VDD-fix artifact from run `32210739218` completed successfully at code commit `5a281df13ce5471e32c500a042cf3cde8da88781`; artifact ID `9351213529`, 138,706,308 bytes. The artifact bundles verified VDD 25.7.23 files and the runtime requests UAC elevation for device installation. |
+| Secure transport v2 | Implemented on Android and Windows sender; Windows listener now has authenticated responder handshake, SAS approval, peer pinning, AES-GCM record dispatch, encrypted control output, per-socket cleanup, and UDP disabled. |
+| Android debug APK | Successful secure-v2 artifact from run `32216613460` at code commit `48ab4f6b8ac71ca52d7196271b7a4b46902af804`; downloaded APK is `artifacts/android-48ab4f6/app-debug.apk`, SHA-256 `fca16864585ed21cf2768f5dcc6cb7e7a8c520ae06b5c286bde85349127def1f`. |
+| Windows all-in-one sender/receiver | Secure-v2 artifact from run `32225528285` completed successfully at code commit `2d22954911c9fb2cd30b42a7cc83556b2bf186b0`; artifact ID `9356084820`, 138,726,417 bytes. The downloaded `BetterCast.exe` is `artifacts/windows-2d22954/BetterCast.exe`, SHA-256 `3d958126cccd12887b0da6083487034e25479617346c61af94ca67cf05e5206b`. |
 | Feature research notes | Official WASAPI loopback, Android MediaProjection, clipboard/storage, and VDD installation constraints are recorded in `research_feature_constraints.md`; mirroring remains optional and requires per-session Android consent. |
 | Windows VDD remediation | Root cause confirmed: the all-in-one workflow omitted the VDD payload and runtime installation was unelevated. The workflow now pins and hashes the VDD packages; runtime installation uses explicit UAC-approved `devcon`/`pnputil` execution. Details are in `WINDOWS_VDD_DRIVER_FIX.md`. |
 
@@ -46,15 +48,16 @@ The final target is a Windows–Android ecosystem companion rather than a single
 2. Full arbitrary Android keyboard injection is deferred because AccessibilityService gesture control is broadly available but raw key injection is restricted by Android. The implementation must distinguish gesture support from full keyboard support.
 3. The Android app may require the user to enable its AccessibilityService once before Phone Control can be armed. This is a necessary OS permission, not a hidden escalation.
 4. The Android notification/foreground-service path is the safe fallback for second-display restoration when Android blocks background activity launches.
-5. The initial control protocol remains an intermediate milestone. Before production use on untrusted networks, it must gain authenticated pairing, encryption, replay protection, capability negotiation, and explicit revocation.
+5. Secure pairing, authenticated encryption, replay protection, and per-peer pinning are now implemented for transport v2. Capability negotiation and revocation remain before file, clipboard, audio, or broader remote-control expansion.
 6. OpenH264 is an acceptable non-GPL software H.264 fallback candidate for the Windows sender, subject to CI/runtime verification. x264 is not silently re-enabled after its source hash failure.
 7. Existing desktop sender and Android receiver video paths are reused rather than replacing them with a new media stack until a successful Windows all-in-one build proves the current path works.
 
 ## Open issues to resolve autonomously
 
-- Complete the Windows all-in-one build and repair any Qt, OpenH264, CMake, linker, or packaging failures. The current VDD-remediated build now completes successfully in run `32210739218`.
-- Run automated Android and repository regression tests after each fix.
-- Audit the new control protocol for malformed JSON, rate abuse, session authorization, and disconnect behavior; rate abuse and disconnect cleanup have now been hardened, while authentication/encryption remain release blockers.
-- Add safe session suspend/resume state handling and the Windows hotkey foundation where it can be implemented without human setup.
-- Produce a broader feature roadmap for files, clipboard, audio, second display, keyboard/text, and optional phone mirroring, clearly labeling platform limitations.
+- Complete the post-CMake Linux validation and retain the successful Windows all-in-one validation as the primary Windows release gate.
+- Run automated Android and repository regression tests after each fix; the Android secure-v2 artifact and 13 repository tests currently pass.
+- Add independent black-box interoperability and negative tests for SAS mismatch, changed pinned identity, sequence replay, malformed ciphertext, oversized records, and disconnect races.
+- Add capability negotiation and explicit revocation before file transfer, clipboard, audio, or expanded remote-control features.
+- Add safe session suspend/resume state handling and the Windows hotkey foundation where it can be implemented without human setup; the current hotkey milestone is already present.
+- Produce the broader feature roadmap for files, clipboard, audio, second display, keyboard/text, and optional phone mirroring, clearly labeling platform limitations.
 - Keep a final handoff with commit IDs, artifact links, hashes, test results, unresolved limitations, and a clear separation between completed capabilities, milestones, and future roadmap items.
