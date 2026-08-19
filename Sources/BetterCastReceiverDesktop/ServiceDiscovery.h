@@ -6,6 +6,7 @@
 #include <QUdpSocket>
 #include <QTimer>
 #include <QHostAddress>
+#include <QHash>
 
 struct DiscoveredService {
     QString name;
@@ -42,6 +43,7 @@ private slots:
     void onMdnsReadyRead();
     void sendAnnouncement();
     void sendBrowseQuery();
+    void sendAddressQuery(const QString& host);
 
 private:
     void handleMdnsQuery(const QByteArray& packet, const QHostAddress& sender, uint16_t senderPort);
@@ -72,4 +74,7 @@ private:
     QTimer* m_browseTimer = nullptr;
     bool m_browsing = false;
     QList<DiscoveredService> m_discovered;
+    QHash<QString, QString> m_mdnsPtrRecords;
+    QHash<QString, QPair<QString, uint16_t>> m_mdnsSrvRecords;
+    QHash<QString, QHostAddress> m_mdnsARecords;
 };

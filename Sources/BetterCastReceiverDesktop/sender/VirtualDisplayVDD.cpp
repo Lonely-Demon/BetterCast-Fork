@@ -312,12 +312,54 @@ bool VirtualDisplayVDD::isDriverLoaded() const {
         }
     }
 
-    // Also check via named pipe — if pipe exists, driver is running
+    // Also check via named pipe — if pipe exists, driver is running.
     HANDLE pipe = CreateFileA(kVddPipeName, GENERIC_READ | GENERIC_WRITE,
                               0, nullptr, OPEN_EXISTING, 0, nullptr);
     if (pipe != INVALID_HANDLE_VALUE) {
         CloseHandle(pipe);
         return true;
+    }
+
+    // MttVDD is a UMDF driver and may not register a service key named after
+    // the package. Inspect the actual present Display-class device instead.
+    HDEVINFO devInfo = SetupDiGetClassDevsW(
+        &GUID_DEVCLASS_DISPLAY, nullptr, nullptr,
+        DIGCF_PRESENT | DIGCF_ALLCLASSES);
+    if (devInfo != INVALID_HANDLE_VALUE) {
+        SP_DEVINFO_DATA devData = {};
+        devData.cbSize = sizeof(devData);
+        for (DWORD i = 0; SetupDiEnumDeviceInfo(devInfo, i, &devData); ++i) {
+            wchar_t hwId[512] = {};
+            if (!SetupDiGetDeviceRegistryPropertyW(
+                    devInfo, &devData, SPDRP_HARDWAREID, nullptr,
+                    reinterpret_cast<PBYTE>(hwId), sizeof(hwId), nullptr)) {
+                continue;
+            }
+            const QString id = QString::fromWCharArray(hwId).toLower();
+            bool matches = false;
+            for (const auto& vddId : kVddHardwareIds) {
+                if (id.contains(vddId.toLower())) {
+                    matches = true;
+                    break;
+                }
+            }
+            if (!matches) continue;
+
+            ULONG deviceStatus = 0;
+            ULONG problemCode = 0;
+            const CONFIGRET statusResult = CM_Get_DevNode_Status(
+                &deviceStatus, &problemCode, devData.DevInst, 0);
+            SetupDiDestroyDeviceInfoList(devInfo);
+            if (statusResult == CR_SUCCESS && problemCode == 0) {
+                VDD_LOG("VDD: Present MttVDD display device has no Config Manager problem");
+                return true;
+            }
+            VDD_LOG(QString("VDD: MttVDD device exists but is not ready (CM status=%1, problem=%2)")
+                        .arg(static_cast<unsigned long>(deviceStatus))
+                        .arg(static_cast<unsigned long>(problemCode)));
+            return false;
+        }
+        SetupDiDestroyDeviceInfoList(devInfo);
     }
 #endif
     return false;
@@ -326,6 +368,16 @@ bool VirtualDisplayVDD::isDriverLoaded() const {
 bool VirtualDisplayVDD::installDriver() {
 #ifdef _WIN32
     if (m_vddPath.isEmpty()) return false;
+
+    auto waitForDriverReady = [this](int timeoutMs) {
+        const int intervalMs = 500;
+        const int attempts = timeoutMs / intervalMs;
+        for (int attempt = 0; attempt < attempts; ++attempt) {
+            if (isDriverLoaded()) return true;
+            QThread::msleep(intervalMs);
+        }
+        return isDriverLoaded();
+    };
 
     // Find the signed devcon.exe bundled with the verified VDD Control package.
     QString devconExe = m_vddPath + "/devcon.exe";
@@ -348,10 +400,12 @@ bool VirtualDisplayVDD::installDriver() {
                                        .arg(infPath);
         VDD_LOG("VDD: Requesting administrator approval to install via devcon: " + devconExe);
         if (runElevatedAndWait(devconExe, parameters, &exitCode)) {
-            VDD_LOG("VDD: Elevated devcon created the device node");
-            QThread::msleep(2500);
-            if (isDriverLoaded()) return true;
-            VDD_LOG("VDD: devcon exited successfully but the driver is not yet visible");
+            VDD_LOG("VDD: Elevated devcon created the device node; waiting for Windows Plug and Play");
+            if (waitForDriverReady(30000)) {
+                VDD_LOG("VDD: Driver became visible after devcon installation");
+                return true;
+            }
+            VDD_LOG("VDD: devcon completed but the driver is still not visible after 30 seconds");
         } else {
             VDD_LOG(QString("VDD: Elevated devcon failed with exit code %1").arg(exitCode));
         }
@@ -367,21 +421,34 @@ bool VirtualDisplayVDD::installDriver() {
     VDD_LOG("VDD: Requesting administrator approval to run pnputil /add-driver");
     const bool pnputilOk = runElevatedAndWait("pnputil.exe", pnputilParameters, &pnputilExitCode);
     VDD_LOG(QString("VDD: Elevated pnputil exit code %1").arg(pnputilExitCode));
+    if (pnputilExitCode == ERROR_NO_MORE_ITEMS) {
+        VDD_LOG("VDD: pnputil 259 means no matching device was updated or a better driver is already selected; it is not an asynchronous-success code");
+    } else if (pnputilExitCode == ERROR_SUCCESS_REBOOT_REQUIRED) {
+        VDD_LOG("VDD: pnputil staged the driver and requested a reboot; checking the current device before failing");
+    }
 
-    if (pnputilOk && QFileInfo::exists(devconExe)) {
+    if (waitForDriverReady(10000)) {
+        VDD_LOG("VDD: Driver became visible after pnputil");
+        return true;
+    }
+
+    // pnputil can stage the package without creating the Root\\MttVDD node.
+    // Always retry the explicitly identified device with the verified devcon;
+    // do not gate this retry on pnputil's return value (259 is common here).
+    if (QFileInfo::exists(devconExe)) {
         DWORD devconExitCode = 1;
         const QString deviceParameters = QString("install \"%1\" Root\\MttVDD")
                                              .arg(infPath);
-        if (runElevatedAndWait(devconExe, deviceParameters, &devconExitCode)) {
-            VDD_LOG("VDD: Elevated devcon created the device node after pnputil");
-            QThread::msleep(2500);
-            if (isDriverLoaded()) return true;
+        VDD_LOG("VDD: Retrying elevated devcon after pnputil");
+        const bool devconOk = runElevatedAndWait(devconExe, deviceParameters, &devconExitCode);
+        VDD_LOG(QString("VDD: Retry devcon exit code %1").arg(devconExitCode));
+        if (devconOk && waitForDriverReady(30000)) {
+            VDD_LOG("VDD: Driver became visible after the post-pnputil devcon retry");
+            return true;
         }
-        VDD_LOG(QString("VDD: Second elevated devcon attempt failed with exit code %1")
-                    .arg(devconExitCode));
     }
 
-    VDD_LOG("VDD: Installation did not produce a loaded driver; no silent fallback is attempted");
+    VDD_LOG("VDD: Installation did not produce a loaded driver; inspect %WINDIR%\\inf\\setupapi.dev.log for the signed-package failure");
 #endif
     return false;
 }

@@ -158,13 +158,34 @@ class SecurityHardeningRegressionTests(unittest.TestCase):
         self.assertIn("BetterCastAccessibilityService.setSessionArmed(false)", android)
         self.assertIn("override fun onCleared()", android)
 
+    def test_windows_discovery_and_vdd_install_recovery_are_hardened(self):
+        main_cpp = self.read("Sources/BetterCastReceiverDesktop/main.cpp")
+        main_window = self.read("Sources/BetterCastReceiverDesktop/MainWindow.cpp")
+        discovery_h = self.read("Sources/BetterCastReceiverDesktop/ServiceDiscovery.h")
+        discovery_cpp = self.read("Sources/BetterCastReceiverDesktop/ServiceDiscovery.cpp")
+        vdd = self.read("Sources/BetterCastReceiverDesktop/sender/VirtualDisplayVDD.cpp")
+        installer = self.read("Sources/BetterCastReceiverDesktop/installer.nsi")
+        self.assertIn("parseReceiverEndpoint", main_window)
+        self.assertIn("optionally followed by :port", main_window)
+        self.assertIn("m_mdnsPtrRecords", discovery_h)
+        self.assertIn("sendAddressQuery", discovery_cpp)
+        self.assertIn("assembled mDNS PTR/SRV/A", discovery_cpp)
+        self.assertIn("waitForDriverReady(30000)", vdd)
+        self.assertIn("pnputil 259 means no matching device", vdd)
+        self.assertIn("Retrying elevated devcon after pnputil", vdd)
+        self.assertIn('profile=any', main_cpp)
+        self.assertIn('profile=any', installer)
+        self.assertIn('remoteip=localsubnet', main_cpp)
+        self.assertIn('remoteip=localsubnet', installer)
+
     def test_installer_has_no_wildcard_executable_fallback(self):
         installer = self.read("Sources/BetterCastReceiverDesktop/installer.nsi")
         self.assertNotIn("FindFirst", installer)
         self.assertNotIn("try_exe", installer)
         self.assertNotIn("try_generic_inf", installer)
         self.assertIn("MttVDD.inf", installer)
-        self.assertIn("profile=private", installer)
+        self.assertIn("profile=any", installer)
+        self.assertIn("remoteip=localsubnet", installer)
 
     def test_ci_downloads_are_verified_or_pinned(self):
         all_in_one = self.read(".github/workflows/build-windows-all-in-one.yml")

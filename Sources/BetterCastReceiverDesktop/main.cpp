@@ -16,12 +16,38 @@ static void ensureFirewallRule() {
     check.start("netsh", {"advfirewall", "firewall", "show", "rule", "name=BetterCast mDNS In"});
     check.waitForFinished(3000);
     QString output = QString::fromUtf8(check.readAllStandardOutput());
-    if (output.contains("BetterCast mDNS In")) {
-        qDebug() << "Firewall: Rules already exist";
-        return;
+    const bool rulesExist = output.contains("BetterCast mDNS In");
+    if (rulesExist) {
+        qDebug() << "Firewall: BetterCast rules already exist; refreshing profile and local-subnet scope";
+    } else {
+        qDebug() << "Firewall: Adding rules (requires admin)...";
     }
 
-    qDebug() << "Firewall: Adding rules (requires admin)...";
+    // Existing releases created Private-only rules. Update them in place so
+    // authenticated transport can also be used on Windows Public Wi-Fi;
+    // remoteip=localsubnet prevents exposure to arbitrary routed networks.
+    if (rulesExist) {
+        QProcess update;
+        update.start("netsh", {"advfirewall", "firewall", "set", "rule",
+                                "name=BetterCast mDNS In", "new",
+                                "profile=any", "remoteip=localsubnet"});
+        update.waitForFinished(3000);
+        update.start("netsh", {"advfirewall", "firewall", "set", "rule",
+                                "name=BetterCast mDNS Out", "new",
+                                "profile=any", "remoteip=localsubnet"});
+        update.waitForFinished(3000);
+        update.start("netsh", {"advfirewall", "firewall", "set", "rule",
+                                "name=BetterCast Receiver", "new",
+                                "profile=any", "remoteip=localsubnet"});
+        update.waitForFinished(3000);
+        if (update.exitCode() == 0) {
+            qputenv("BETTERCAST_FW_STATUS", "ok");
+            qDebug() << "Firewall: Existing rules refreshed successfully";
+            return;
+        }
+        qDebug() << "Firewall: Existing rules could not be refreshed; attempting recreation";
+    }
+
 
     // Inbound UDP 5353 — receive mDNS queries from Mac/other devices
     QProcess addIn;
@@ -29,7 +55,7 @@ static void ensureFirewallRule() {
                           "name=BetterCast mDNS In",
                           "dir=in", "action=allow", "protocol=UDP",
                           "localport=5353",
-                          "profile=private", "remoteip=localsubnet",
+                          "profile=any", "remoteip=localsubnet",
                           "description=Allow inbound mDNS for BetterCast auto-discovery"});
     addIn.waitForFinished(3000);
 
@@ -39,7 +65,7 @@ static void ensureFirewallRule() {
                            "name=BetterCast mDNS Out",
                            "dir=out", "action=allow", "protocol=UDP",
                            "remoteport=5353",
-                           "profile=private", "remoteip=localsubnet",
+                           "profile=any", "remoteip=localsubnet",
                            "description=Allow outbound mDNS for BetterCast auto-discovery"});
     addOut.waitForFinished(3000);
 
@@ -49,7 +75,7 @@ static void ensureFirewallRule() {
                             "name=BetterCast Receiver",
                             "dir=in", "action=allow", "protocol=TCP",
                             "localport=51820",
-                            "profile=private", "remoteip=localsubnet",
+                            "profile=any", "remoteip=localsubnet",
                             "description=Allow BetterCast screen streaming"});
     addTcp.waitForFinished(3000);
 

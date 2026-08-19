@@ -93,10 +93,10 @@ Section "BetterCast (required)" SecCore
 
     ; Add firewall rules
     DetailPrint "Adding firewall rules..."
-    ; Keep exposure limited to the Windows Private profile and local subnet.
-    nsExec::ExecToLog 'netsh advfirewall firewall add rule name="BetterCast mDNS" dir=in action=allow protocol=UDP localport=5353 profile=private remoteip=localsubnet'
-    nsExec::ExecToLog 'netsh advfirewall firewall add rule name="BetterCast Streaming" dir=in action=allow protocol=TCP localport=51820 profile=private remoteip=localsubnet'
-    nsExec::ExecToLog 'netsh advfirewall firewall add rule name="BetterCast App" dir=in action=allow program="$INSTDIR\BetterCastReceiver.exe" profile=private remoteip=localsubnet'
+    ; Authenticated transport is safe on any Windows profile; keep exposure limited to the local subnet.
+    nsExec::ExecToLog 'netsh advfirewall firewall add rule name="BetterCast mDNS In" dir=in action=allow protocol=UDP localport=5353 profile=any remoteip=localsubnet'
+    nsExec::ExecToLog 'netsh advfirewall firewall add rule name="BetterCast mDNS Out" dir=out action=allow protocol=UDP remoteport=5353 profile=any remoteip=localsubnet'
+    nsExec::ExecToLog 'netsh advfirewall firewall add rule name="BetterCast Receiver" dir=in action=allow protocol=TCP localport=51820 profile=any remoteip=localsubnet'
 SectionEnd
 
 Section "Virtual Display Driver (VDD)" SecVDD
@@ -156,7 +156,10 @@ SectionEnd
 ; ─── Uninstaller ─────────────────────────────────────────────────────────────────
 
 Section "Uninstall"
-    ; Remove firewall rules
+    ; Remove current and legacy firewall rules
+    nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="BetterCast mDNS In"'
+    nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="BetterCast mDNS Out"'
+    nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="BetterCast Receiver"'
     nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="BetterCast mDNS"'
     nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="BetterCast Streaming"'
     nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="BetterCast App"'

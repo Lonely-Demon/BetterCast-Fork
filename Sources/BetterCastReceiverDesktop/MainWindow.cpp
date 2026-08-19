@@ -32,12 +32,56 @@
 #include <QDebug>
 #include <QNetworkInterface>
 #include <QUrl>
+#include <QHostAddress>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #ifdef Q_OS_WIN
 #include <windows.h>
 #endif
 #include <thread>
+
+#ifdef ENABLE_SENDER
+namespace {
+bool parseReceiverEndpoint(const QString& input, QString* hostOut, uint16_t* portOut,
+                           uint16_t defaultPort = 51820) {
+    QString value = input.trimmed();
+    if (value.isEmpty() || value.contains(' ') || value.contains('\t') ||
+        value.contains('\n') || value.contains('\r') || value.contains('/')) return false;
+
+    QString host = value;
+    uint16_t port = defaultPort;
+
+    // Accept IPv4/hostname[:port] and bracketed IPv6 [addr]:port.
+    if (value.startsWith('[')) {
+        const int close = value.indexOf(']');
+        if (close <= 1) return false;
+        host = value.mid(1, close - 1);
+        if (value.size() > close + 1) {
+            if (value[close + 1] != ':') return false;
+            bool ok = false;
+            const int parsed = value.mid(close + 2).toInt(&ok);
+            if (!ok || parsed < 1 || parsed > 65535) return false;
+            port = static_cast<uint16_t>(parsed);
+        }
+    } else {
+        const int firstColon = value.indexOf(':');
+        const int lastColon = value.lastIndexOf(':');
+        if (firstColon > 0 && firstColon == lastColon) {
+            bool ok = false;
+            const int parsed = value.mid(lastColon + 1).toInt(&ok);
+            if (!ok || parsed < 1 || parsed > 65535) return false;
+            host = value.left(lastColon);
+            port = static_cast<uint16_t>(parsed);
+        }
+    }
+
+    if (host.isEmpty()) return false;
+    if (hostOut) *hostOut = host;
+    if (portOut) *portOut = port;
+    return true;
+}
+}
+#endif
 
 // ─── Dark theme stylesheet ─────────────────────────────────────────────────────
 
@@ -788,7 +832,7 @@ void MainWindow::setupSendPage() {
     hostLabel->setStyleSheet("font-size: 13px; color: #ccc;");
     hostRow->addWidget(hostLabel);
     m_sendHostEdit = new QLineEdit();
-    m_sendHostEdit->setPlaceholderText("e.g. 192.168.1.50");
+    m_sendHostEdit->setPlaceholderText("e.g. 192.168.1.50 or 192.168.1.50:51820");
     m_sendHostEdit->setFixedWidth(200);
     hostRow->addWidget(m_sendHostEdit);
     hostRow->addStretch();
@@ -819,12 +863,14 @@ void MainWindow::setupSendPage() {
     m_controlConnectBtn = new QPushButton("Connect for Phone Control");
     connect(m_controlConnectBtn, &QPushButton::clicked, this, [this]() {
         if (!m_sender || !m_sendHostEdit) return;
-        const QString host = m_sendHostEdit->text().trimmed();
-        if (host.isEmpty()) {
-            if (m_senderStatusLabel) m_senderStatusLabel->setText("Enter the Android IP address first");
+        QString host;
+        uint16_t port = m_selectedReceiverPort;
+        if (!parseReceiverEndpoint(m_sendHostEdit->text(), &host, &port)) {
+            if (m_senderStatusLabel) m_senderStatusLabel->setText("Enter an Android IP or hostname, optionally followed by :port");
             return;
         }
-        if (m_sender->startControlOnly(host, m_selectedReceiverPort)) {
+        m_selectedReceiverPort = port;
+        if (m_sender->startControlOnly(host, port)) {
             m_controlConnectBtn->setEnabled(false);
             if (m_sendBtn) m_sendBtn->setEnabled(false);
             if (m_phoneControlBtn) m_phoneControlBtn->setEnabled(true);
@@ -1363,12 +1409,14 @@ void MainWindow::attemptAdbReconnect() {
 
 #ifdef ENABLE_SENDER
 void MainWindow::onSendScreenClicked() {
-    QString host = m_sendHostEdit->text().trimmed();
-    if (host.isEmpty()) {
-        m_senderStatusLabel->setText("Enter a receiver IP address first");
+    QString host;
+    uint16_t port = m_selectedReceiverPort;
+    if (!parseReceiverEndpoint(m_sendHostEdit->text(), &host, &port)) {
+        m_senderStatusLabel->setText("Enter an Android IP or hostname, optionally followed by :port");
         m_senderStatusLabel->setStyleSheet("font-size: 12px; color: #d32f2f;");
         return;
     }
+    m_selectedReceiverPort = port;
 
     // Apply selected monitor to sender controller
     if (m_monitorCombo && m_monitorCombo->currentIndex() >= 0) {
@@ -1395,7 +1443,7 @@ void MainWindow::onSendScreenClicked() {
     int bitrate = m_bitrateSpinBox->value();
     LogManager::instance().log(QString("Starting sender to %1 at %2 FPS, %3 Mbps")
                                    .arg(host).arg(fps).arg(bitrate));
-    m_sender->startSending(host, m_selectedReceiverPort, fps, bitrate);
+    m_sender->startSending(host, port, fps, bitrate);
 }
 
 void MainWindow::onCreateVirtualDisplay() {

@@ -147,6 +147,10 @@ void ServiceDiscovery::stopAdvertising() {
 void ServiceDiscovery::startBrowsing() {
     if (m_browsing) return;
     m_browsing = true;
+    m_discovered.clear();
+    m_mdnsPtrRecords.clear();
+    m_mdnsSrvRecords.clear();
+    m_mdnsARecords.clear();
 
     ensureMdnsSocket();
 
@@ -242,6 +246,26 @@ void ServiceDiscovery::sendBrowseQuery() {
     m_mdnsSocket->writeDatagram(query, kMdnsAddress, kMdnsPort);
 }
 
+void ServiceDiscovery::sendAddressQuery(const QString& host) {
+    if (!m_mdnsSocket || host.isEmpty()) return;
+
+    QByteArray query;
+    uint16_t zero = 0;
+    uint16_t qdCount = qToBigEndian(static_cast<uint16_t>(1));
+    query.append(reinterpret_cast<const char*>(&zero), 2);
+    query.append(reinterpret_cast<const char*>(&zero), 2);
+    query.append(reinterpret_cast<const char*>(&qdCount), 2);
+    query.append(reinterpret_cast<const char*>(&zero), 2);
+    query.append(reinterpret_cast<const char*>(&zero), 2);
+    query.append(reinterpret_cast<const char*>(&zero), 2);
+    query.append(encodeDnsName(host));
+    const uint16_t typeA = qToBigEndian(kTypeA);
+    const uint16_t classIN = qToBigEndian(kClassIN);
+    query.append(reinterpret_cast<const char*>(&typeA), 2);
+    query.append(reinterpret_cast<const char*>(&classIN), 2);
+    m_mdnsSocket->writeDatagram(query, kMdnsAddress, kMdnsPort);
+}
+
 QByteArray ServiceDiscovery::buildBrowseQuery() {
     QByteArray pkt;
 
@@ -307,110 +331,105 @@ void ServiceDiscovery::handleMdnsResponse(const QByteArray& packet) {
     if (!(flags & 0x8000)) return; // Not a response
 
     uint16_t qdCount = qFromBigEndian<uint16_t>(d + 4);
-    uint16_t anCount = qFromBigEndian<uint16_t>(d + 6);
-
     int offset = 12;
 
-    // Skip questions
-    for (int i = 0; i < qdCount && offset < packet.size(); i++) {
+    // Skip questions safely.
+    for (int i = 0; i < qdCount && offset < packet.size(); ++i) {
         decodeDnsName(packet, offset);
-        offset += 4; // skip qtype + qclass
+        if (offset + 4 > packet.size()) return;
+        offset += 4;
     }
 
-    // Parse answer records — collect PTR, SRV, A records
-    QString instanceName;
-    QString srvHost;
-    uint16_t srvPort = 0;
-    QHostAddress aAddr;
+    const uint16_t anCount = qFromBigEndian<uint16_t>(d + 6);
+    const uint16_t nsCount = qFromBigEndian<uint16_t>(d + 8);
+    const uint16_t arCount = qFromBigEndian<uint16_t>(d + 10);
+    const int totalRecords = static_cast<int>(anCount) + nsCount + arCount;
 
-    int totalRecords = anCount +
-        qFromBigEndian<uint16_t>(d + 8) +  // authority
-        qFromBigEndian<uint16_t>(d + 10);   // additional
-
-    for (int i = 0; i < totalRecords && offset + 10 < packet.size(); i++) {
-        QString rrName = decodeDnsName(packet, offset);
+    for (int i = 0; i < totalRecords && offset + 10 <= packet.size(); ++i) {
+        const QString rrName = decodeDnsName(packet, offset);
         if (offset + 10 > packet.size()) break;
 
-        uint16_t rrType = qFromBigEndian<uint16_t>(d + offset);
+        const uint16_t rrType = qFromBigEndian<uint16_t>(d + offset);
         offset += 2;
         offset += 2; // class
         offset += 4; // TTL
-        uint16_t rdLen = qFromBigEndian<uint16_t>(d + offset);
+        const uint16_t rdLen = qFromBigEndian<uint16_t>(d + offset);
         offset += 2;
-
-        int rdEnd = offset + rdLen;
+        const int rdStart = offset;
+        const int rdEnd = rdStart + rdLen;
         if (rdEnd > packet.size()) break;
 
         if (rrType == kTypePTR && rrName.contains("_bettercast._tcp")) {
-            instanceName = decodeDnsName(packet, offset);
-            // Strip service type suffix to get the display name
-            int idx = instanceName.indexOf("._bettercast._tcp");
-            if (idx > 0) instanceName = instanceName.left(idx);
-        } else if (rrType == kTypeSRV) {
-            if (rdLen >= 6) {
-                offset += 2; // priority
-                offset += 2; // weight
-                srvPort = qFromBigEndian<uint16_t>(d + offset);
-                offset += 2;
-                srvHost = decodeDnsName(packet, offset);
+            int rdataOffset = rdStart;
+            const QString fullInstance = decodeDnsName(packet, rdataOffset);
+            if (!fullInstance.isEmpty()) {
+                QString displayName = fullInstance;
+                const int suffix = displayName.indexOf("._bettercast._tcp");
+                if (suffix > 0) displayName = displayName.left(suffix);
+                m_mdnsPtrRecords.insert(fullInstance, displayName);
+            }
+        } else if (rrType == kTypeSRV && rdLen >= 6) {
+            int rdataOffset = rdStart + 4;
+            const uint16_t port = qFromBigEndian<uint16_t>(d + rdataOffset);
+            rdataOffset += 2;
+            const QString target = decodeDnsName(packet, rdataOffset);
+            if (!rrName.isEmpty() && !target.isEmpty()) {
+                m_mdnsSrvRecords.insert(rrName, qMakePair(target, port));
             }
         } else if (rrType == kTypeA && rdLen == 4) {
-            quint32 ip = qFromBigEndian<quint32>(d + offset);
-            aAddr = QHostAddress(ip);
+            const quint32 ip = qFromBigEndian<quint32>(d + rdStart);
+            m_mdnsARecords.insert(rrName, QHostAddress(ip));
         }
 
         offset = rdEnd;
     }
 
-    // If we got enough info, emit the discovered service
-    if (!instanceName.isEmpty() && srvPort == 0) {
-        // Got PTR but no SRV in this packet — send a targeted query for the SRV
-        MDNS_LOG(QString("mDNS: Got PTR for '%1' but no SRV/A — sending follow-up query").arg(instanceName));
-    }
-    if (!instanceName.isEmpty() && srvPort > 0) {
-        // Use A record IP if available, otherwise try to resolve SRV host
-        QString host;
-        if (!aAddr.isNull()) {
-            host = aAddr.toString();
-        } else if (!srvHost.isEmpty()) {
-            host = srvHost;
-            if (host.endsWith(".local")) host.chop(1); // remove trailing dot if present
+    // Resolve every service whose PTR/SRV/A records are now available. This
+    // handles Android NSD responses where additional A records arrive later.
+    for (auto ptrIt = m_mdnsPtrRecords.cbegin(); ptrIt != m_mdnsPtrRecords.cend(); ++ptrIt) {
+        const auto srvIt = m_mdnsSrvRecords.constFind(ptrIt.key());
+        if (srvIt == m_mdnsSrvRecords.cend()) continue;
+
+        const QString target = srvIt.value().first;
+        const uint16_t port = srvIt.value().second;
+        QHostAddress address = m_mdnsARecords.value(target);
+        if (address.isNull()) {
+            QHostAddress parsedTarget;
+            if (parsedTarget.setAddress(target)) address = parsedTarget;
+        }
+        if (address.isNull()) {
+            sendAddressQuery(target);
+            continue;
         }
 
-        if (host.isEmpty()) return;
-
-        // Skip our own service
-        if (isOwnAddress(QHostAddress(host)) && srvPort == m_advertisedPort) return;
+        const QString host = address.toString();
+        if (isOwnAddress(address) && port == m_advertisedPort) continue;
 
         DiscoveredService svc;
-        svc.name = instanceName;
+        svc.name = ptrIt.value();
         svc.host = host;
-        svc.port = srvPort;
+        svc.port = port;
 
-        // Check if already discovered
         bool found = false;
         for (auto& existing : m_discovered) {
-            if (existing.name == svc.name) {
+            if (existing.name == svc.name || existing.host == svc.host) {
+                existing.name = svc.name;
                 existing.host = svc.host;
                 existing.port = svc.port;
                 found = true;
                 break;
             }
         }
-
         if (!found) {
             m_discovered.append(svc);
-            MDNS_LOG(QString("Discovered receiver: %1 at %2:%3 (from mDNS SRV record)")
+            MDNS_LOG(QString("Discovered receiver: %1 at %2:%3 (assembled mDNS PTR/SRV/A)")
                          .arg(svc.name, svc.host).arg(svc.port));
-            if (svc.port != 51820) {
-                MDNS_LOG(QString("NOTE: Receiver port %1 differs from default 51820 — "
-                                 "verify receiver is actually listening on this port")
-                             .arg(svc.port));
-            }
             emit serviceFound(svc);
         }
     }
 }
+
+
 
 void ServiceDiscovery::onMdnsReadyRead() {
     while (m_mdnsSocket && m_mdnsSocket->hasPendingDatagrams()) {
