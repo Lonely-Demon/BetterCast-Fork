@@ -127,7 +127,7 @@ class SecureSession(
                         IDENTITY_ALIAS,
                         KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY,
                     ).setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
-                        .setDigests(KeyProperties.DIGEST_SHA256)
+                        .setDigests(KeyProperties.DIGEST_NONE, KeyProperties.DIGEST_SHA256)
                         .build()
                 )
                 generator.generateKeyPair()
@@ -283,18 +283,18 @@ class SecureSession(
 
     private fun signTranscript(): ByteArray? {
         return try {
-            val signature = Signature.getInstance("SHA256withECDSA")
+            val signature = Signature.getInstance("NONEwithECDSA")
             signature.initSign(identityPrivateKey!!)
-            signature.update(transcript)
+            signature.update(MessageDigest.getInstance("SHA-256").digest(transcript))
             signature.sign()
         } catch (_: Exception) { null }
     }
 
     private fun verifyTranscript(signatureBytes: ByteArray): Boolean {
         return try {
-            val signature = Signature.getInstance("SHA256withECDSA")
+            val signature = Signature.getInstance("NONEwithECDSA")
             signature.initVerify(decodePublicKey(peerIdentityPublic))
-            signature.update(transcript)
+            signature.update(MessageDigest.getInstance("SHA-256").digest(transcript))
             signature.verify(signatureBytes)
         } catch (_: Exception) { false }
     }

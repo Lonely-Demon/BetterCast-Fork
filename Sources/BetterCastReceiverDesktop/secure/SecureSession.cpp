@@ -3,6 +3,7 @@
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QSaveFile>
 #include <QtEndian>
 
@@ -68,6 +69,15 @@ QByteArray derEncodeEcdsa(const QByteArray& raw) {
     };
     const QByteArray body = integer(raw.left(32)) + integer(raw.mid(32, 32));
     return QByteArray(1, static_cast<char>(0x30)) + QByteArray(1, static_cast<char>(body.size())) + body;
+}
+
+bool constantTimeEqual(const QByteArray& left, const QByteArray& right) {
+    if (left.size() != right.size()) return false;
+    uint8_t difference = 0;
+    for (int i = 0; i < left.size(); ++i) {
+        difference |= static_cast<uint8_t>(left[i]) ^ static_cast<uint8_t>(right[i]);
+    }
+    return difference == 0;
 }
 
 QByteArray derDecodeEcdsa(const QByteArray& der) {
@@ -614,8 +624,7 @@ bool SecureSession::verifyConfirmation(const QByteArray& message, bool initiator
     }
     const QByteArray expected = makeConfirmation(initiatorConfirmation, error).mid(1);
     const QByteArray received = message.mid(1);
-    if (expected.size() != 32 || received.size() != 32 ||
-        !std::equal(expected.cbegin(), expected.cend(), received.cbegin())) {
+    if (expected.size() != 32 || received.size() != 32 || !constantTimeEqual(expected, received)) {
         return fail(error, "Secure key confirmation failed");
     }
     return true;

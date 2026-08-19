@@ -29,7 +29,7 @@ class TcpClient(private val context: Context) {
         private const val HEARTBEAT_INTERVAL_MS = 500L
         private const val DEFAULT_PORT = 51820
         private const val MAX_HANDSHAKE_MESSAGE = 512
-        private const val MAX_FRAME_SIZE = 8 * 1024 * 1024
+        private const val MAX_FRAME_SIZE = 8 * 1024 * 1024 + 1024
         private const val CONTROL_TYPE = 0x03
         private const val MAX_CONTROL_BYTES = 16 * 1024
         private const val MAX_CONTROL_PER_SECOND = 240
