@@ -146,6 +146,7 @@ if(ENABLE_SENDER)
         list(APPEND HEADERS
             sender/ScreenCaptureWin.h
             sender/VirtualDisplayVDD.h
+            secure/SecureSession.h
             sender/PhoneControlController.h
         )
     endif()
@@ -161,6 +162,15 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/appicon.ico")
 endif()
 
 add_executable(BetterCastReceiver ${SOURCES} ${HEADERS} ${RESOURCES})
+
+# Keep the Windows secure-session implementation explicit in the target. This
+# prevents generator/source-list drift from silently producing an unauthenticated
+# sender binary that links against only the SecureSession declarations.
+if(WIN32 AND ENABLE_SENDER)
+    target_sources(BetterCastReceiver PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/secure/SecureSession.cpp"
+    )
+endif()
 
 if(ENABLE_STRICT_WARNINGS)
     if(MSVC)
@@ -207,7 +217,7 @@ endif()
 if(ENABLE_SENDER)
     target_compile_definitions(BetterCastReceiver PRIVATE ENABLE_SENDER=1)
     if(WIN32)
-        target_link_libraries(BetterCastReceiver PRIVATE d3d11 dxgi setupapi)
+        target_link_libraries(BetterCastReceiver PRIVATE d3d11 dxgi setupapi bcrypt crypt32)
     endif()
 endif()
 
